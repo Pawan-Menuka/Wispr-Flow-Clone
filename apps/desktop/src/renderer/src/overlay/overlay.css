@@ -1,0 +1,124 @@
+/* Overlay pill styles (BLUEPRINT §5.1). Pill palette is theme-invariant. */
+.overlay-root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  font-family: var(--font-sans);
+  -webkit-app-region: drag; /* draggable pill; interactive children opt out */
+}
+
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: var(--r-pill);
+  background: var(--bg-overlay);
+  color: var(--pill-fg);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-overlay);
+  animation: pill-in var(--dur-fast) var(--ease-out);
+  max-width: 320px;
+}
+
+@keyframes pill-in {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.interim {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the tail (latest words) visible */
+  text-align: left;
+  max-width: 220px;
+}
+.interim > bdi {
+  unicode-bidi: plaintext;
+}
+.interim .unstable {
+  color: var(--pill-fg-dim);
+}
+
+.state-label {
+  color: var(--pill-fg-dim);
+}
+
+.pill.error {
+  outline: 1px solid var(--danger);
+}
+.pill.error .message {
+  color: var(--pill-fg);
+}
+
+.pill .check {
+  color: var(--success);
+  font-size: 16px;
+}
+
+.shimmer {
+  width: 90px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.12) 25%,
+    rgba(255, 255, 255, 0.38) 50%,
+    rgba(255, 255, 255, 0.12) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+.chip {
+  border: none;
+  border-radius: var(--r-pill);
+  background: rgba(28, 28, 30, 0.88);
+  color: var(--pill-fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  padding: 5px 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+}
+.chip:hover {
+  background: rgba(60, 60, 66, 0.95);
+}
+
+.offline-chip {
+  font-size: var(--text-xs);
+  color: var(--warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill {
+    animation: none;
+  }
+  .shimmer {
+    animation: none;
+    background: rgba(255, 255, 255, 0.25);
+  }
+}
