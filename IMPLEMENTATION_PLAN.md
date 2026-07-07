@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | 0 | Repo scaffold: pnpm monorepo, Turborepo, shared configs | §8 | done | 2026-07-07 |
 | 1 | `packages/shared`: Settings schema, IPC contract, WS protocol, ErrorKind | §7.3, §18, §19 | done | 2026-07-07 |
-| 2 | Electron shell: boots to tray, single-instance, deep-link stub, windows (main + overlay), typed IPC plumbing | §7.2, §5.5 | todo | |
+| 2 | Electron shell: boots to tray, single-instance, deep-link stub, windows (main + overlay), typed IPC plumbing | §7.2, §5.5 | done | 2026-07-07 |
 | 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | todo | |
 | 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, Silero VAD, waveform, device picker | §13.1–13.4 | todo | |
 | 5 | Global hotkey layer (Windows first): uiohook-napi or native hook, hold/toggle detection, DictationController state machine skeleton | §14.1, §3.1 | todo | Win-only OK for now; mac later |
@@ -57,3 +57,16 @@ Built `packages/shared` (tsc-built ESM, exports `./dist`):
 - `src/ipc.ts` — `FlowInvoke`/`FlowEvents` maps per §7.3, `FlowBridge` (the `window.flow` surface), overlay allowlists (`OVERLAY_INVOKE_ALLOWLIST`/`OVERLAY_EVENT_ALLOWLIST`).
 - Tests: 13 vitest cases (settings salvage + key partition, ws parse/reject, audio-frame round-trip + seq wrap, quota bands). `turbo run build test typecheck` all green.
 - Decision: server-message `entitlements` payload kept `z.unknown()` to avoid duplicating the TS shape in zod; validated app-side.
+
+### Phase 2 — done (2026-07-07)
+Built `apps/desktop` on **electron-vite 3** (CJS main/preload — no `"type":"module"`, required for sandboxed preloads; `@flow/shared` ESM gets bundled in):
+- `src/main/index.ts` — single-instance lock, `flowapp://` protocol registration + deep-link routing stub (logs route only, never query strings), tray-first lifecycle (`window-all-closed` keeps running), `--smoke` mode (asserts both renderers load, exit 0/1).
+- `src/main/windows.ts` — `WindowManager`: main window (980×640, close-to-tray) + overlay (frameless/transparent/alwaysOnTop `screen-saver`/skipTaskbar/**focusable:false**, backgroundThrottling off, preloaded at boot, bottom-center positioning); hardened webPreferences everywhere (contextIsolation+sandbox+no nodeIntegration); typed `broadcast()` honoring `OVERLAY_EVENT_ALLOWLIST`; load promises stored for smoke checks (`webContents.isLoading()` proved unreliable post-load — do NOT reintroduce it).
+- `src/main/ipc/handlers.ts` — typed `handle()` wrapper: sender-identity guard (destroyed-window-safe `liveId`), overlay invoke-allowlist enforcement, zod arg validation. Implemented: settings:get/set (per-key schema validation + `settings:changed` broadcast), app:getVersion/openExternal (URL allowlist)/openLogsFolder; stubs registered: auth:getSession→null, dictation:cancel, app:checkForUpdates.
+- `src/main/services/settings-store.ts` — atomic JSON store (tmp+rename) using shared `parseSettings` salvage; `onChange` subscription for live-apply (Phase 5 hotkey service will use).
+- `src/preload/index.ts` (full bridge, channel-shape check) + `src/preload/overlay.ts` (reduced bridge enforcing both overlay allowlists) exposing `window.flow`.
+- Renderers: `src/renderer/index.html→src/app/App.tsx` (dev shell proving invoke/set/subscribe round-trip incl. theme cycle) and `overlay.html→src/overlay/main.tsx` (pill placeholder rendering `dictation:state`). CSP meta on both.
+- `scripts/gen-icons.mjs` — dependency-free PNG encoder generating `resources/tray.png`/`icon.png` (committed).
+- **Gotcha fixed**: pnpm 10 blocks postinstall scripts → Electron binary never downloaded; root package.json now has `pnpm.onlyBuiltDependencies: ["electron","esbuild"]`.
+- Verified: `turbo run build typecheck test` 5/5 green; `electron . --smoke` exits 0 (tray-ready + both renderers). Teardown IPC rejections in smoke stderr are the sender guard working (windows destroyed during exit), not a bug.
+- Deviation from §8: overlay entry lives at `src/renderer/overlay.html` + `src/renderer/src/overlay/` (electron-vite wants one renderer root) instead of a separate `src/overlay/` dir.
