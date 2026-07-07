@@ -17,7 +17,7 @@
 | 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | done | 2026-07-07 |
 | 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, VAD, waveform, device picker | §13.1–13.4 | done | 2026-07-07 (energy VAD; Silero deferred) |
 | 5 | Global hotkey layer (Windows first): uiohook-napi, hold/toggle detection, DictationController state machine | §14.1, §3.1 | done | 2026-07-07 (STT stub until Ph. 7) |
-| 6 | Backend skeleton: NestJS + Fastify + Prisma schema + Redis + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | todo | docker-compose for pg/redis |
+| 6 | Backend skeleton: NestJS + Fastify + Prisma schema + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | done | 2026-07-07 (Redis/Prisma-client wiring deferred) |
 | 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | todo | needs DEEPGRAM_API_KEY |
 | 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | todo | |
 | 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | todo | needs ANTHROPIC_API_KEY |
@@ -100,3 +100,14 @@ Hotkey layer + real DictationController (demo remains as a tray item):
 - Tests: `chords.test.ts` (7) + `controller.test.ts` (6, fake deps/timers: PTT happy path, tap-latch + silence finish, second-tap finish, no-speech, cancel, mic-loss). Desktop pkg now has vitest.
 - **Watch item**: smoke's live loop yielded `result` from ambient noise → default vadSensitivity 0.5 (threshold ≈0.024 post-AGC) may be too hot; tune while dogfooding Phase 7.
 - macOS parity (CGEventTap/Fn key, secure-input detection) deferred per project rules.
+
+### Phase 6 — done (2026-07-07)
+`apps/api` (NestJS 10 + Fastify, ESM/NodeNext) + infra:
+- `src/main.ts` — Nest bootstrap (FastifyAdapter), `attachDictationGateway(app.getHttpServer())` after listen; `src/app.module.ts` + `modules/health/health.controller.ts` (GET /health → `{ok,version}`; verified live with curl).
+- **WS gateway is plain `ws`, deliberately NOT a Nest gateway** (binary frames + zod-validated `t`-routing don't fit Nest's event model): `modules/dictation/gateway.ts` — `/v1/stream`, ping/pong heartbeat (2 misses → close 4000), injectable provider + heartbeatMs for tests; `modules/dictation/connection.ts` — `ClientConnection`, one active session per socket, full §18 handling: start→ready, binary frames via shared `decodeAudioFrame`, interims relayed, finish→result (`formatted:false` until Phase 9), cancel, resume→`ready{ackSeq}` or `SESSION_UNKNOWN`, malformed input → `system.notice` warn, rewrite/sync → explicit not-available notices; dangling session replaced on new start; close cancels stream.
+- `modules/ai/stt.ts` — §12.4 provider abstraction (`SttProvider`/`SttStream`: sendAudio/finish→Promise<string>/cancel/onInterim/onError) + `EchoSttProvider` (interim every 25 frames, final = frame accounting). **Phase 7 = implement `DeepgramSttProvider` against this interface; gateway untouched.**
+- `prisma/schema.prisma` — complete §10 schema (User/AuthProvider/Device/RefreshToken/Dictation/DictionaryEntry/Snippet/AppRule/Subscription/UsageEvent/StripeEvent/AuditLog). **`prisma generate`/`migrate` NOT run yet** (engine download deferred — flaky network; no DB code exists yet). `@prisma/client` dep added in Phase 10 when first used. `pnpm db:generate` / `db:migrate` scripts ready.
+- `infra/docker-compose.dev.yml` — postgres:16 + redis:7. `.env.example` (PORT/DATABASE_URL/REDIS_URL/REQUIRE_AUTH=false). Redis client wiring deferred to first use (quota, Phase 7+). **WS upgrade auth is stubbed — anonymous allowed until Phase 10.**
+- Tests: `gateway.test.ts` — 4 integration tests over a real socket (full session with 50 frames → 2 interims + correct result/duration; resume ack + unknown-session error; malformed-message notices; finish-without-session). Session code is Nest-free ⇒ no decorator-metadata issues under vitest/esbuild.
+- Verified: turbo build/typecheck/test **11/11**; server booted, `GET /health` → `{"ok":true,"version":"0.0.1"}`.
+- Dev scripts: `pnpm dev` (tsx watch) in apps/api; desktop connects in Phase 7.
