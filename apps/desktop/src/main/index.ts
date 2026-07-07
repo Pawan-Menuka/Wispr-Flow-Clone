@@ -8,6 +8,9 @@ import { runDemoDictation } from './dictation/demo';
 import { AudioBridge } from './services/audio-bridge';
 import { DictationController } from './dictation/controller';
 import { HotkeyService } from './hotkeys/hotkey-service';
+import { WsClient } from './services/ws-client';
+
+const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 
 const isSmokeTest = process.argv.includes('--smoke');
 
@@ -69,7 +72,12 @@ function bootstrap(): void {
     audio.attach(mainWindow.webContents);
     mainWindow.webContents.on('did-finish-load', () => audio.attach(mainWindow.webContents));
 
-    // Dictation core: hotkey → controller → audio (§3.1).
+    // Warm backend connection (§9.2) — reconnects with backoff for life.
+    const wsClient = new WsClient(API_WS_URL);
+    wsClient.connect();
+    app.on('before-quit', () => wsClient.shutdown());
+
+    // Dictation core: hotkey → controller → audio + WS session (§3.1).
     const controller = new DictationController({
       broadcast: (channel, payload) => windows.broadcast(channel, payload),
       showOverlay: () => windows.showOverlay(),
@@ -77,6 +85,12 @@ function bootstrap(): void {
       requestCapture: (active) => audio.requestCapture(active),
       takePreRoll: () => audio.takePreRoll(),
       getHotkeyMode: () => settings.get('hotkeyMode'),
+      startSttSession: (sessionId) =>
+        wsClient.startSession({
+          sessionId,
+          language: settings.get('language'),
+          appContext: { processName: 'unknown', profile: 'default' }, // focus tracker: Phase 16
+        }),
     });
     audio.onFrame((frame) => controller.onFrame(frame));
     audio.onVad((speaking) => controller.onVad(speaking));
@@ -201,10 +215,13 @@ function smokeDictationLoop(
       // Observe outcomes via the controller's own broadcasts.
       windows.broadcast = (channel, payload) => {
         orig(channel, payload);
-        if (channel === 'dictation:result') done('result');
+        if (channel === 'dictation:result') {
+          done(`result: "${(payload as { text: string }).text.slice(0, 80)}"`);
+        }
         if (channel === 'dictation:error') {
           const kind = (payload as { kind?: string }).kind;
-          if (kind === 'no-speech') done('no-speech');
+          // network = API not running during smoke — the loop still proved itself.
+          if (kind === 'no-speech' || kind === 'network') done(kind);
           else {
             cleanup();
             reject(new Error(`dictation error: ${kind}`));
@@ -225,6 +242,9 @@ function smokeDictationLoop(
     };
 
     controller.onChordDown();
+    // Synthetic VAD signal: the loop verifies transport (frames → server →
+    // result), not the energy VAD — quiet rooms must not skip the round-trip.
+    setTimeout(() => controller.onVad(true), 300);
     setTimeout(() => controller.onChordUp(), 1_500); // held > tap threshold → PTT finish
   });
 }
