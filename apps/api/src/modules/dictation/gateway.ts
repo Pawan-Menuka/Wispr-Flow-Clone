@@ -4,10 +4,12 @@ import type { WebSocket } from 'ws';
 import { HEARTBEAT_INTERVAL_MS, WS_CLOSE_CODES } from '@flow/shared';
 import { EchoSttProvider } from '../ai/stt.js';
 import type { SttProvider } from '../ai/stt.js';
+import { FormattingService } from '../ai/formatter.js';
 import { ClientConnection } from './connection.js';
 
 export interface GatewayOptions {
   provider?: SttProvider;
+  formatter?: FormattingService;
   heartbeatMs?: number;
 }
 
@@ -23,6 +25,7 @@ export function attachDictationGateway(
   opts: GatewayOptions = {},
 ): WebSocketServer {
   const provider = opts.provider ?? new EchoSttProvider();
+  const formatter = opts.formatter ?? new FormattingService(null);
   const heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_INTERVAL_MS;
   const wss = new WebSocketServer({ server, path: '/v1/stream' });
 
@@ -31,7 +34,7 @@ export function attachDictationGateway(
   wss.on('connection', (socket) => {
     alive.set(socket, true);
     socket.on('pong', () => alive.set(socket, true));
-    new ClientConnection(socket, provider);
+    new ClientConnection(socket, provider, formatter);
   });
 
   const heartbeat = setInterval(() => {

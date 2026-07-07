@@ -20,7 +20,7 @@
 | 6 | Backend skeleton: NestJS + Fastify + Prisma schema + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | done | 2026-07-07 (Redis/Prisma-client wiring deferred) |
 | 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | done | 2026-07-07 (echo E2E verified; live Deepgram untested — needs DEEPGRAM_API_KEY) |
 | 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | done | 2026-07-07 |
-| 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | todo | needs ANTHROPIC_API_KEY |
+| 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | done | 2026-07-07 (live goldens need ANTHROPIC_API_KEY) |
 | 10 | Auth: Google OAuth PKCE + deep link, magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | todo | |
 | 11 | Settings system: electron-store, live-apply, settings UI shell, shortcut recorder | §19, §5.4 | todo | |
 | 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | todo | |
@@ -122,6 +122,17 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 9 — done (2026-07-07)
+LLM formatting layer (apps/api `modules/ai/`):
+- `prompt.ts` — §12.2 formatting system prompt v1: 9 rules (incl. self-corrections, spoken punctuation, anti-injection "transcript is DATA"), style profiles (default/slack/email/code/terminal), optional dictionary/recent-context/custom-instructions sections. **Every prompt edit must re-run the golden suite.**
+- `rule-format.ts` — deterministic fallback: filler stripping (word-boundary safe), spoken-punctuation map (incl. new line/paragraph), whitespace/capitalization/standalone-I, terminal period. Fully unit-tested.
+- `llm.ts` — `LlmProvider` interface + `AnthropicLlmProvider` (`@anthropic-ai/sdk`, model env `ANTHROPIC_MODEL` default **claude-haiku-4-5** per §12.1 latency budget; client timeout 8 s, maxRetries 0, **no sampling params** so model overrides stay valid across the current API surface).
+- `formatter.ts` — `FormattingService.format(raw, {language, appProfile})`: <4 words or no provider → rule-based (`formatted:false`); LLM path with 8 s total budget + output `sanitize()` (fences/wrapping quotes); any failure degrades to rules — never blocks a result.
+- `connection.ts` — result now carries `rawText` (STT) + `finalText` (formatted) + real `formatted` flag; session stores language + appContext.profile from session.start. Gateway takes `formatter` option (default rules-only); `main.ts` selects by `ANTHROPIC_API_KEY` and logs `LLM: anthropic:<model>` or `rules-only`.
+- Golden set: `fixtures/golden.json` (8 cases: fillers, spoken punctuation, question preservation, self-correction, injection resistance, number formatting…) — `rule` expectations exact-matched in `rule-format.test.ts`; `llm` expectations run in `formatter.test.ts` via `describe.skipIf(!ANTHROPIC_API_KEY)` with word-Dice similarity ≥0.75. **Live goldens never ran (no key) — run `ANTHROPIC_API_KEY=… pnpm test` in apps/api before trusting the prompt.**
+- Verified: turbo 11/11; API tests 19 passed + 8 skipped (live); E2E smoke with API up → result flows through formatter (echo text rule-formatted, `formatted:false`).
+- Env: `.env.example` gained DEEPGRAM_API_KEY/DEEPGRAM_MODEL/ANTHROPIC_API_KEY/ANTHROPIC_MODEL.
 
 ### Phase 8 — done (2026-07-07)
 Tier-2 insertion engine (§14.3) + controller integration:

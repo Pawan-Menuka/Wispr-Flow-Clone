@@ -1,7 +1,8 @@
 import type { WebSocket } from 'ws';
-import type { ServerMessage, WsErrorCode } from '@flow/shared';
+import type { AppContext, ServerMessage, WsErrorCode } from '@flow/shared';
 import { decodeAudioFrame, parseClientMessage } from '@flow/shared';
 import type { SttProvider, SttStream } from '../ai/stt.js';
+import type { FormattingService } from '../ai/formatter.js';
 
 interface ActiveSession {
   id: string;
@@ -10,6 +11,8 @@ interface ActiveSession {
   frames: number;
   startedAt: number;
   finishRequestedAt: number;
+  language: string;
+  profile: AppContext['profile'];
 }
 
 /**
@@ -23,6 +26,7 @@ export class ClientConnection {
   constructor(
     private readonly socket: WebSocket,
     private readonly stt: SttProvider,
+    private readonly formatter: FormattingService,
   ) {
     socket.on('message', (data, isBinary) => {
       if (isBinary) this.onAudio(data as Buffer);
@@ -40,7 +44,7 @@ export class ClientConnection {
 
     switch (msg.t) {
       case 'session.start':
-        void this.startSession(msg.sessionId, msg.language);
+        void this.startSession(msg.sessionId, msg.language, msg.appContext.profile);
         break;
       case 'session.finish':
         void this.finishSession(msg.sessionId);
@@ -68,7 +72,11 @@ export class ClientConnection {
     }
   }
 
-  private async startSession(sessionId: string, language?: string): Promise<void> {
+  private async startSession(
+    sessionId: string,
+    language: string | undefined,
+    profile: AppContext['profile'],
+  ): Promise<void> {
     // A dangling previous session is replaced (client crashed mid-utterance).
     this.session?.stream.cancel();
     try {
@@ -80,6 +88,8 @@ export class ClientConnection {
         frames: 0,
         startedAt: Date.now(),
         finishRequestedAt: 0,
+        language: language ?? 'auto',
+        profile,
       };
       stream.onInterim((interim) => {
         if (this.session?.id === sessionId) {
@@ -116,15 +126,19 @@ export class ClientConnection {
     }
     session.finishRequestedAt = Date.now();
     try {
-      const text = await session.stream.finish();
+      const rawText = await session.stream.finish();
+      const { text: finalText, formatted } = await this.formatter.format(rawText, {
+        language: session.language,
+        appProfile: session.profile,
+      });
       const durationMs = session.frames * 20;
       this.send({
         t: 'session.result',
         sessionId,
-        finalText: text,
-        rawText: text,
-        formatted: false, // LLM formatting arrives in Phase 9
-        wordCount: text ? text.trim().split(/\s+/).length : 0,
+        finalText,
+        rawText,
+        formatted,
+        wordCount: finalText ? finalText.trim().split(/\s+/).length : 0,
         durationMs,
         latencyMs: Date.now() - session.finishRequestedAt,
       });
