@@ -8,12 +8,25 @@ import { DeepgramSttProvider } from './modules/ai/deepgram.js';
 import { EchoSttProvider } from './modules/ai/stt.js';
 import { AnthropicLlmProvider } from './modules/ai/llm.js';
 import { FormattingService } from './modules/ai/formatter.js';
+import { AuthService } from './modules/auth/auth.service.js';
+import { TokenService } from './modules/auth/tokens.js';
+import { registerAuthRoutes } from './modules/auth/auth.routes.js';
+import { getPrisma } from './modules/db.js';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
     logger: ['warn', 'error', 'log'],
   });
   app.enableShutdownHooks();
+
+  // ---------- Auth (§11) ----------
+  const jwtSecret = process.env['JWT_SECRET'] ?? '';
+  const tokens = new TokenService(
+    jwtSecret || 'dev-only-secret-change-me-in-prod',
+  );
+  if (!jwtSecret) console.warn('[api] JWT_SECRET not set — using the DEV secret');
+  const auth = new AuthService(getPrisma(), tokens);
+  registerAuthRoutes(app.getHttpAdapter().getInstance(), auth);
 
   const port = Number(process.env['PORT'] ?? 8787);
   await app.listen(port, '0.0.0.0');
@@ -26,9 +39,14 @@ async function bootstrap(): Promise<void> {
     anthropicKey ? new AnthropicLlmProvider(anthropicKey) : null,
   );
 
-  attachDictationGateway(app.getHttpServer(), { provider, formatter });
+  const requireAuth = process.env['REQUIRE_AUTH'] === 'true';
+  attachDictationGateway(app.getHttpServer(), {
+    provider,
+    formatter,
+    ...(requireAuth ? { verifyToken: (token: string) => tokens.verifyAccessToken(token) } : {}),
+  });
   console.log(
-    `[api] listening on :${port} — REST /health, WS /v1/stream (STT: ${provider.name}, LLM: ${formatter.providerName})`,
+    `[api] listening on :${port} — REST /health + /v1/auth, WS /v1/stream (STT: ${provider.name}, LLM: ${formatter.providerName}, auth: ${requireAuth ? 'required' : 'open'})`,
   );
 }
 

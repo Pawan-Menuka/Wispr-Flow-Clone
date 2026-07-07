@@ -11,6 +11,8 @@ export interface GatewayOptions {
   provider?: SttProvider;
   formatter?: FormattingService;
   heartbeatMs?: number;
+  /** When set, WS connections must present a valid `Authorization: Bearer`. */
+  verifyToken?: (token: string) => Promise<unknown | null>;
 }
 
 /**
@@ -31,7 +33,21 @@ export function attachDictationGateway(
 
   const alive = new WeakMap<WebSocket, boolean>();
 
-  wss.on('connection', (socket) => {
+  wss.on('connection', (socket, request) => {
+    if (opts.verifyToken) {
+      const header = request.headers.authorization;
+      const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
+      void (token ? opts.verifyToken(token) : Promise.resolve(null)).then((claims) => {
+        if (!claims) {
+          socket.close(WS_CLOSE_CODES.UNAUTHORIZED, 'authentication required');
+          return;
+        }
+        alive.set(socket, true);
+        socket.on('pong', () => alive.set(socket, true));
+        new ClientConnection(socket, provider, formatter);
+      });
+      return;
+    }
     alive.set(socket, true);
     socket.on('pong', () => alive.set(socket, true));
     new ClientConnection(socket, provider, formatter);
