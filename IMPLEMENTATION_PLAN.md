@@ -16,7 +16,7 @@
 | 2 | Electron shell: boots to tray, single-instance, deep-link stub, windows (main + overlay), typed IPC plumbing | §7.2, §5.5 | done | 2026-07-07 |
 | 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | done | 2026-07-07 |
 | 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, VAD, waveform, device picker | §13.1–13.4 | done | 2026-07-07 (energy VAD; Silero deferred) |
-| 5 | Global hotkey layer (Windows first): uiohook-napi or native hook, hold/toggle detection, DictationController state machine skeleton | §14.1, §3.1 | todo | Win-only OK for now; mac later |
+| 5 | Global hotkey layer (Windows first): uiohook-napi, hold/toggle detection, DictationController state machine | §14.1, §3.1 | done | 2026-07-07 (STT stub until Ph. 7) |
 | 6 | Backend skeleton: NestJS + Fastify + Prisma schema + Redis + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | todo | docker-compose for pg/redis |
 | 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | todo | needs DEEPGRAM_API_KEY |
 | 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | todo | |
@@ -89,3 +89,14 @@ Audio pipeline, mic → main process, per §13.1–13.4:
 - Smoke: `--smoke-mic` flag = real-capture assertion (≥25 frames/8 s). Passing on dev machine.
 - **Gotchas fixed (do not regress)**: (1) AudioWorkletNode with no output path to `ctx.destination` is never pulled — node has 1 silent output connected to destination; (2) **Electron MessagePort transfer lists accept only MessagePorts** — transferring `pcm.buffer` throws; frames are copied (640 B) instead; (3) hidden-window AudioContext may start `suspended` — always `resume()`.
 - Deviation: VAD is energy-based behind the `Vad` interface; **Silero ONNX upgrade pending** (onnxruntime-web + ~2 MB model) — slot into Phase 14 stabilization.
+
+### Phase 5 — done (2026-07-07)
+Hotkey layer + real DictationController (demo remains as a tray item):
+- `src/main/hotkeys/chords.ts` — **pure** chord parser (no uiohook import ⇒ testable): `parseChord('Ctrl+Win') → ChordGroups` where each group lists left/right keycode variants; keycode table mirrors uiohook-napi's `UiohookKey` constants; lone letters/modifiers rejected, lone F-keys allowed; `chordSatisfied(groups, downKeys)`.
+- `src/main/hotkeys/hotkey-service.ts` — uiohook-napi global hook (listen-only: **cannot swallow keys**, fine for modifier chords; note if a printable-key chord is ever default, revisit with a native hook); tracks down-keys set, emits dictate chord edge events + Escape; live re-registration via settings.onChange in index.ts; **hook not started in --smoke runs** (controller driven directly).
+- `src/main/dictation/controller.ts` — `DictationController`, Electron-free with injected `ControllerDeps` (broadcast/show/hide/requestCapture/takePreRoll/getHotkeyMode). Semantics: chord-down begins (armed→capture w/ pre-roll); release <300 ms = tap → latches toggle (next tap or VAD-silence finishes); ≥300 ms release = PTT finish; `hotkeyMode:'toggle'` always latches; Esc cancels; VAD speaking → listening; no speech by finish → `no-speech` error (4 s linger); confirmed lingers 3 s; 5-min frame cap. `finalize()` is the Phase-7 seam — currently emits a stub result with voiced/captured seconds. `results.ts` holds `lastResult` (moved out of demo.ts).
+- Tray: "Start / stop dictation" → `controller.toggle()`. IPC `dictation:cancel` → `controller.cancel()` (handlers ctx now takes controller).
+- Smoke: `--smoke-mic` now also runs `smokeDictationLoop` — simulated chord hold 1.5 s with real capture, passes on either `result` or `no-speech` outcome. Passing (got `result`).
+- Tests: `chords.test.ts` (7) + `controller.test.ts` (6, fake deps/timers: PTT happy path, tap-latch + silence finish, second-tap finish, no-speech, cancel, mic-loss). Desktop pkg now has vitest.
+- **Watch item**: smoke's live loop yielded `result` from ambient noise → default vadSensitivity 0.5 (threshold ≈0.024 post-AGC) may be too hot; tune while dogfooding Phase 7.
+- macOS parity (CGEventTap/Fn key, secure-input detection) deferred per project rules.
