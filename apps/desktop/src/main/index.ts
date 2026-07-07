@@ -6,6 +6,8 @@ import { SettingsStore } from './services/settings-store';
 import { registerIpcHandlers } from './ipc/handlers';
 import { runDemoDictation } from './dictation/demo';
 import { AudioBridge } from './services/audio-bridge';
+import { DictationController } from './dictation/controller';
+import { HotkeyService } from './hotkeys/hotkey-service';
 
 const isSmokeTest = process.argv.includes('--smoke');
 
@@ -56,7 +58,6 @@ function bootstrap(): void {
   // ---------- Lifecycle ----------
   app.whenReady().then(async () => {
     const settings = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'));
-    registerIpcHandlers({ windows, settings });
 
     // Overlay is created at boot and kept hidden so it can paint in <50 ms later.
     await windows.createOverlayWindow();
@@ -68,7 +69,41 @@ function bootstrap(): void {
     audio.attach(mainWindow.webContents);
     mainWindow.webContents.on('did-finish-load', () => audio.attach(mainWindow.webContents));
 
-    createTray(windows, audio);
+    // Dictation core: hotkey → controller → audio (§3.1).
+    const controller = new DictationController({
+      broadcast: (channel, payload) => windows.broadcast(channel, payload),
+      showOverlay: () => windows.showOverlay(),
+      hideOverlay: () => windows.hideOverlay(),
+      requestCapture: (active) => audio.requestCapture(active),
+      takePreRoll: () => audio.takePreRoll(),
+      getHotkeyMode: () => settings.get('hotkeyMode'),
+    });
+    audio.onFrame((frame) => controller.onFrame(frame));
+    audio.onVad((speaking) => controller.onVad(speaking));
+    audio.onError((message) => controller.onCaptureError(message));
+
+    registerIpcHandlers({ windows, settings, controller });
+
+    const hotkeys = new HotkeyService();
+    if (!hotkeys.setDictateChord(settings.get('hotkey'))) {
+      console.warn(`[hotkeys] invalid chord "${settings.get('hotkey')}", falling back to Ctrl+Win`);
+      hotkeys.setDictateChord('Ctrl+Win');
+    }
+    hotkeys.onDictateDown(() => controller.onChordDown());
+    hotkeys.onDictateUp(() => controller.onChordUp());
+    hotkeys.onEscape(() => controller.cancel());
+    settings.onChange((patch) => {
+      if (patch.hotkey !== undefined && !hotkeys.setDictateChord(patch.hotkey)) {
+        console.warn(`[hotkeys] rejected invalid chord "${patch.hotkey}"`);
+      }
+    });
+    if (!isSmokeTest) {
+      // The global hook stays off in smoke runs; the controller is driven directly.
+      hotkeys.start();
+      app.on('before-quit', () => hotkeys.stop());
+    }
+
+    createTray(windows, audio, controller);
     console.log('[boot] tray-ready');
 
     if (pendingDeepLink) {
@@ -77,7 +112,7 @@ function bootstrap(): void {
     }
 
     if (isSmokeTest) {
-      runSmokeChecks(windows, audio);
+      runSmokeChecks(windows, audio, controller);
     } else {
       // Until onboarding exists (Phase 12), show the main window on launch.
       mainWindow.show();
@@ -108,7 +143,11 @@ function extractDeepLink(argv: string[]): string | null {
  * the demo timeline completes. `--smoke-mic` additionally starts real capture
  * and requires PCM frames to arrive over the MessagePort (needs a mic).
  */
-function runSmokeChecks(windows: WindowManager, audio: AudioBridge): void {
+function runSmokeChecks(
+  windows: WindowManager,
+  audio: AudioBridge,
+  controller: DictationController,
+): void {
   const wantMic = process.argv.includes('--smoke-mic');
   const timeout = setTimeout(() => {
     console.error('[smoke] FAIL: timed out');
@@ -127,6 +166,7 @@ function runSmokeChecks(windows: WindowManager, audio: AudioBridge): void {
       return runDemoDictation(windows, { fast: true });
     })
     .then(() => (wantMic ? smokeMicCheck(audio) : undefined))
+    .then(() => (wantMic ? smokeDictationLoop(windows, controller) : undefined))
     .then(() => {
       clearTimeout(timeout);
       console.log('[smoke] ok: tray-ready, renderers loaded, demo dictation completed');
@@ -137,6 +177,56 @@ function runSmokeChecks(windows: WindowManager, audio: AudioBridge): void {
       console.error('[smoke] FAIL:', err);
       app.exit(1);
     });
+}
+
+/**
+ * Full state-machine pass with real capture: simulated chord hold →
+ * mic frames flow → release → expect a result or a clean no-speech error
+ * (silent rooms are fine — both paths prove the loop).
+ */
+function smokeDictationLoop(
+  windows: WindowManager,
+  controller: DictationController,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const outcomes: string[] = [];
+    const done = (label: string) => {
+      cleanup();
+      console.log(`[smoke] dictation loop ok (${label})`);
+      resolve();
+    };
+    const unsubscribe = subscribeOnce();
+    function subscribeOnce() {
+      const orig = windows.broadcast.bind(windows);
+      // Observe outcomes via the controller's own broadcasts.
+      windows.broadcast = (channel, payload) => {
+        orig(channel, payload);
+        if (channel === 'dictation:result') done('result');
+        if (channel === 'dictation:error') {
+          const kind = (payload as { kind?: string }).kind;
+          if (kind === 'no-speech') done('no-speech');
+          else {
+            cleanup();
+            reject(new Error(`dictation error: ${kind}`));
+          }
+        }
+      };
+      return () => {
+        windows.broadcast = orig;
+      };
+    }
+    const loopTimeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`dictation loop: no outcome (saw: ${outcomes.join(',') || 'nothing'})`));
+    }, 8_000);
+    const cleanup = () => {
+      clearTimeout(loopTimeout);
+      unsubscribe();
+    };
+
+    controller.onChordDown();
+    setTimeout(() => controller.onChordUp(), 1_500); // held > tap threshold → PTT finish
+  });
 }
 
 /** Real-capture assertion: ≥25 frames (0.5 s of audio) within 8 s. */

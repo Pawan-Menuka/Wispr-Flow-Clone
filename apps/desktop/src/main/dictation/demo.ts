@@ -1,15 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { WindowManager } from '../windows';
+import { lastResult } from './results';
 
 /**
- * Scripted dictation timeline (Phase 3 stand-in for the real
- * DictationController arriving in Phase 5). Exercises the full overlay
- * path: state transitions, audio levels, interims, result, chips.
+ * Scripted dictation timeline exercising the full overlay path without a
+ * mic or hotkey: state transitions, audio levels, interims, result, chips.
  * Triggered from the tray ("Demo dictation") and by `--smoke`.
  */
-
-/** Last finished dictation, consumed by clipboard:copyResult / undo stubs. */
-export const lastResult: { id: string | null; text: string } = { id: null, text: '' };
 
 let running = false;
 
