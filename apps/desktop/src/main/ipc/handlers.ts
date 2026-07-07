@@ -1,10 +1,11 @@
-import { app, ipcMain, shell } from 'electron';
+import { app, clipboard, ipcMain, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { z } from 'zod';
 import type { InvokeChannel, Settings } from '@flow/shared';
 import { OVERLAY_INVOKE_ALLOWLIST, SettingsSchema } from '@flow/shared';
 import type { SettingsStore } from '../services/settings-store';
 import type { WindowManager } from '../windows';
+import { lastResult } from '../dictation/demo';
 
 interface IpcContext {
   windows: WindowManager;
@@ -70,8 +71,22 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     windows.broadcast('settings:changed', { [key as keyof Settings]: parsed });
   });
 
+  // ---------- Dictation results ----------
+  handle('clipboard:copyResult', z.tuple([z.string()]), (_e, dictationId) => {
+    // Only the most recent result is retrievable until history lands (Phase 13).
+    if (lastResult.id === dictationId && lastResult.text) {
+      clipboard.writeText(lastResult.text);
+    }
+  });
+
   // ---------- Stubs (implemented in later phases; registered so the contract is live) ----------
   handle('auth:getSession', z.tuple([]), () => null); // Phase 10
   handle('dictation:cancel', z.tuple([]), () => undefined); // Phase 5
+  handle('insertion:undo', z.tuple([]), () => ({
+    ok: false,
+    method: 'none',
+    message: 'Nothing to undo yet',
+  })); // Phase 13
+  handle('rewrite:run', z.tuple([z.string(), z.string()]), () => undefined); // Phase 19
   handle('app:checkForUpdates', z.tuple([]), () => undefined); // Phase 19
 }

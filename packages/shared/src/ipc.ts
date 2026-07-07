@@ -34,6 +34,8 @@ export interface FlowInvoke {
   'dictation:cancel': () => void;
   'insertion:undo': () => UndoResult;
   'rewrite:run': (dictationId: string, instruction: string) => void;
+  /** Copy a finished dictation's text (overlay Copy chip / restore stack). */
+  'clipboard:copyResult': (dictationId: string) => void;
 
   'shortcut:beginCapture': () => void;
   'shortcut:cancelCapture': () => void;
@@ -57,6 +59,8 @@ export interface FlowEvents {
   'dictation:error': { kind: ErrorKind; message: string; rawText?: string };
   /** ~30 Hz while listening; overlay waveform only. */
   'audio:level': { rms: number };
+  /** Main asks the hidden renderer to start/stop mic capture (§13.1). */
+  'audio:capture': { active: boolean };
   'settings:changed': Partial<Settings>;
   'session:changed': SessionInfo | null;
   'sync:status': SyncStatus;
@@ -86,6 +90,7 @@ export const OVERLAY_INVOKE_ALLOWLIST = [
   'dictation:cancel',
   'insertion:undo',
   'rewrite:run',
+  'clipboard:copyResult',
 ] as const satisfies readonly InvokeChannel[];
 
 export const OVERLAY_EVENT_ALLOWLIST = [
