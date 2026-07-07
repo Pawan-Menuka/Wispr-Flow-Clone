@@ -19,7 +19,7 @@
 | 5 | Global hotkey layer (Windows first): uiohook-napi, hold/toggle detection, DictationController state machine | §14.1, §3.1 | done | 2026-07-07 (STT stub until Ph. 7) |
 | 6 | Backend skeleton: NestJS + Fastify + Prisma schema + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | done | 2026-07-07 (Redis/Prisma-client wiring deferred) |
 | 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | done | 2026-07-07 (echo E2E verified; live Deepgram untested — needs DEEPGRAM_API_KEY) |
-| 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | todo | |
+| 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | done | 2026-07-07 |
 | 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | todo | needs ANTHROPIC_API_KEY |
 | 10 | Auth: Google OAuth PKCE + deep link, magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | todo | |
 | 11 | Settings system: electron-store, live-apply, settings UI shell, shortcut recorder | §19, §5.4 | todo | |
@@ -122,3 +122,11 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 8 — done (2026-07-07)
+Tier-2 insertion engine (§14.3) + controller integration:
+- `src/main/services/insertion.ts` — `InsertionService.insertText(text, processName)`: full-format clipboard snapshot (text/html/rtf/image) → writeText → 40 ms propagate → synthetic paste via **`uIOhook.keyTap(V, [Ctrl])`** (works without the hook started; Meta on darwin) → settle (default 150 ms, per-quirk) → restore snapshot (image wins; empty formats omitted; all-empty → clear). Failure path per §3.1: text left ON the clipboard + OS notification "press Ctrl+V". `inFlight` guard prevents overlapping pastes. `APP_QUIRKS` table seeded (windowsterminal/wt/mintty → Ctrl+Shift+V; notion.exe → 400 ms settle); keyed by lowercase process name — callers pass 'unknown' until Phase 16's focus tracker.
+- Controller: result → `inserting` phase → `deps.insertText` → `confirmed`, or `insertion-failed` error ("Copied to clipboard — press Ctrl+V"); empty results skip insertion; late results after cancel are ignored (sessionId check).
+- Safety: regular `--smoke` uses a fake insertText (never pastes into the user's focused app); **`--smoke-insert`** pastes into OUR OWN window: WindowManager loads renderers with `?smoke=1` → App renders an autofocused `SmokeInsertTarget` input that console-logs its value; check asserts pasted text arrived AND a clipboard sentinel was restored.
+- Verified: turbo 11/11 (incl. 2 new controller tests: inserted-phase sequence, insertion-failure degrade); `--smoke --smoke-insert` exit 0 — real synthetic paste into own window + clipboard restore confirmed.
+- Tier 1 (AX direct) and tier 3 (unicode keystrokes) + verification-by-reread deferred to the native-addon phases (16+). **Manual matrix testing (Notepad/Word/browsers/terminals) still pending — start `insertion-matrix.md` when dogfooding begins.**

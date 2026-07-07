@@ -35,6 +35,8 @@ export interface ControllerDeps {
   getHotkeyMode(): 'hold' | 'toggle';
   /** Opens a backend dictation session; null when the API is unreachable. */
   startSttSession(sessionId: string): SttSessionHandle | null;
+  /** Tier-2 insertion (§14.3). Resolves false when it degraded to clipboard. */
+  insertText(text: string): Promise<boolean>;
   now?(): number;
 }
 
@@ -215,6 +217,27 @@ export class DictationController {
     lastResult.id = id;
     lastResult.text = text;
     this.deps.broadcast('dictation:result', { id, text, appName: null });
+
+    if (!text.trim()) {
+      this.confirm();
+      return;
+    }
+
+    this.setPhase('inserting');
+    void this.deps
+      .insertText(text)
+      .then((ok) => {
+        if (this.sessionId !== id) return; // cancelled/superseded meanwhile
+        if (ok) this.confirm();
+        else this.fail('insertion-failed', 'Copied to clipboard — press Ctrl+V to paste');
+      })
+      .catch(() => {
+        if (this.sessionId !== id) return;
+        this.fail('insertion-failed', 'Copied to clipboard — press Ctrl+V to paste');
+      });
+  }
+
+  private confirm(): void {
     this.setPhase('confirmed');
     this.lingerTimer = setTimeout(() => {
       if (this.phase === 'confirmed') this.reset();
