@@ -18,7 +18,7 @@
 | 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, VAD, waveform, device picker | §13.1–13.4 | done | 2026-07-07 (energy VAD; Silero deferred) |
 | 5 | Global hotkey layer (Windows first): uiohook-napi, hold/toggle detection, DictationController state machine | §14.1, §3.1 | done | 2026-07-07 (STT stub until Ph. 7) |
 | 6 | Backend skeleton: NestJS + Fastify + Prisma schema + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | done | 2026-07-07 (Redis/Prisma-client wiring deferred) |
-| 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | todo | needs DEEPGRAM_API_KEY |
+| 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | done | 2026-07-07 (echo E2E verified; live Deepgram untested — needs DEEPGRAM_API_KEY) |
 | 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | todo | |
 | 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | todo | needs ANTHROPIC_API_KEY |
 | 10 | Auth: Google OAuth PKCE + deep link, magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | todo | |
@@ -111,3 +111,14 @@ Hotkey layer + real DictationController (demo remains as a tray item):
 - Tests: `gateway.test.ts` — 4 integration tests over a real socket (full session with 50 frames → 2 interims + correct result/duration; resume ack + unknown-session error; malformed-message notices; finish-without-session). Session code is Nest-free ⇒ no decorator-metadata issues under vitest/esbuild.
 - Verified: turbo build/typecheck/test **11/11**; server booted, `GET /health` → `{"ok":true,"version":"0.0.1"}`.
 - Dev scripts: `pnpm dev` (tsx watch) in apps/api; desktop connects in Phase 7.
+
+### Phase 7 — done (2026-07-07)
+Real STT pipeline, desktop↔API:
+- **API** `modules/ai/deepgram.ts` — `DeepgramSttProvider` (wss://api.deepgram.com/v1/listen, linear16/16k, interim_results+smart_format+punctuate, model env `DEEPGRAM_MODEL` default nova-2, language passthrough unless 'auto', keywords param ready for Phase 15); `accumulateDeepgram()` pure accumulator (finals[] + partial → interim text/stableWords) with 3 unit tests; finish = CloseStream → await socket close (5 s cap) → joined finals. Provider selected in `main.ts`: `DEEPGRAM_API_KEY` set → deepgram, else echo (logged at boot).
+- **Desktop** `services/ws-client.ts` — `WsClient` ('ws' pkg, main process): warm connection at boot, reconnect backoff 250 ms→4 s, `startSession()` returns `SttSessionHandle` (null when disconnected); handle queues audio until `session.ready` then flushes (server drops pre-ready binary); routes interim/result/error by sessionId; connection loss mid-session emits `NETWORK` error to the handle.
+- **Controller** — stub `finalize()` replaced: begin() opens the WS session (null → immediate `network` error with overlay flash), streams every frame live during LISTENING (§12.5 parallelism), finish() sends `session.finish{lastSeq}` + 6 s result timeout → `network`; server interims → `dictation:interim`; ws error codes mapped (`QUOTA→quota-exceeded, UNAUTHORIZED→unauthorized, LLM_TIMEOUT→llm-timeout, NETWORK→network, else stt-failed`); `chordDownAt` regression caught by tests (begin() must stamp it or every release looks held).
+- `FLOW_API_URL` env override (default `ws://127.0.0.1:8787/v1/stream`); appContext.processName='unknown' until Phase 16.
+- Controller tests rewritten around `FakeStt` handle — 8 scenarios incl. interim relay, API-unreachable, server-error mapping, result timeout.
+- Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
+- **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
+- **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
