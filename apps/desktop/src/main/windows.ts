@@ -122,6 +122,13 @@ export class WindowManager {
     this.overlayWindow?.hide();
   }
 
+  /** Debug/smoke helper: relay renderer console output. */
+  pipeConsoleTo(sink: (line: string) => void): void {
+    this.mainWindow?.webContents.on('console-message', (_e, _level, message) => {
+      sink(message);
+    });
+  }
+
   /** Debug/smoke helper: PNG snapshot of the overlay window contents. */
   async captureOverlay(): Promise<Buffer | null> {
     if (!this.overlayWindow || this.overlayWindow.isDestroyed()) return null;

@@ -15,7 +15,7 @@
 | 1 | `packages/shared`: Settings schema, IPC contract, WS protocol, ErrorKind | §7.3, §18, §19 | done | 2026-07-07 |
 | 2 | Electron shell: boots to tray, single-instance, deep-link stub, windows (main + overlay), typed IPC plumbing | §7.2, §5.5 | done | 2026-07-07 |
 | 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | done | 2026-07-07 |
-| 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, Silero VAD, waveform, device picker | §13.1–13.4 | todo | |
+| 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, VAD, waveform, device picker | §13.1–13.4 | done | 2026-07-07 (energy VAD; Silero deferred) |
 | 5 | Global hotkey layer (Windows first): uiohook-napi or native hook, hold/toggle detection, DictationController state machine skeleton | §14.1, §3.1 | todo | Win-only OK for now; mac later |
 | 6 | Backend skeleton: NestJS + Fastify + Prisma schema + Redis + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | todo | docker-compose for pg/redis |
 | 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | todo | needs DEEPGRAM_API_KEY |
@@ -79,3 +79,13 @@ Built `apps/desktop` on **electron-vite 3** (CJS main/preload — no `"type":"mo
 - Handlers: `clipboard:copyResult` (guarded by dictationId match), `insertion:undo` stub (`{ok:false,method:'none'}`), `rewrite:run` stub.
 - Main window imports tokens.css, pinned `data-theme=dark` until Phase 11.
 - Verified: turbo build/typecheck/test 7/7; `--smoke` (now includes fast demo run) exit 0; **overlay screenshot visually confirmed** (dark pill, animated accent waveform, dimmed unstable tail).
+
+### Phase 4 — done (2026-07-07)
+Audio pipeline, mic → main process, per §13.1–13.4:
+- **Renderer** (`src/renderer/src/audio/`): `capture.ts` `CaptureController` — getUserMedia (16 kHz mono, EC/NS/AGC, exact deviceId), `AudioContext({sampleRate:16000})` with explicit `resume()` (hidden window ⇒ may start suspended), worklet node, RMS + VAD per frame, frames posted to main over MessagePort; `vad.ts` — `Vad` interface + `EnergyVad` (threshold from vadSensitivity 0.2–0.8, 2-frame attack, 2 s hangover) + `frameRms`; `wire.ts` — receives the relayed port, obeys `audio:capture` events, live-follows micDeviceId/vadSensitivity settings.
+- **Worklet**: `src/renderer/public/worklets/pcm-framer.js` — plain JS static asset (CSP stays `script-src 'self'`), 128-sample blocks → 320-sample (20 ms) Int16 frames, transferred to the renderer thread; posts `{dbg}` diagnostics on ctor/first-process.
+- **Main**: `services/audio-bridge.ts` `AudioBridge` — `MessageChannelMain` handed to each renderer load via `webContents.postMessage('flow:audio-port')` (preload relays with `window.postMessage`), 15-frame (300 ms) pre-roll ring + `takePreRoll()`, `onFrame/onVad/onError` subscriptions for Phase 5, ~25 Hz `audio:level` broadcast → overlay waveform; `dictation/mic-check.ts` + tray "Mic check (5 s)" (real waveform in the pill); `WindowManager.pipeConsoleTo` (renderer console relay during smoke).
+- Shared: new `audio:capture {active}` event channel.
+- Smoke: `--smoke-mic` flag = real-capture assertion (≥25 frames/8 s). Passing on dev machine.
+- **Gotchas fixed (do not regress)**: (1) AudioWorkletNode with no output path to `ctx.destination` is never pulled — node has 1 silent output connected to destination; (2) **Electron MessagePort transfer lists accept only MessagePorts** — transferring `pcm.buffer` throws; frames are copied (640 B) instead; (3) hidden-window AudioContext may start `suspended` — always `resume()`.
+- Deviation: VAD is energy-based behind the `Vad` interface; **Silero ONNX upgrade pending** (onnxruntime-web + ~2 MB model) — slot into Phase 14 stabilization.

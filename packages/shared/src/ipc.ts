@@ -59,6 +59,8 @@ export interface FlowEvents {
   'dictation:error': { kind: ErrorKind; message: string; rawText?: string };
   /** ~30 Hz while listening; overlay waveform only. */
   'audio:level': { rms: number };
+  /** Main asks the hidden renderer to start/stop mic capture (§13.1). */
+  'audio:capture': { active: boolean };
   'settings:changed': Partial<Settings>;
   'session:changed': SessionInfo | null;
   'sync:status': SyncStatus;

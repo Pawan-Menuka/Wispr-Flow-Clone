@@ -30,3 +30,9 @@ const bridge: FlowBridge = {
 };
 
 contextBridge.exposeInMainWorld('flow', bridge);
+
+// Relay the audio MessagePort from main into the page (Electron's documented
+// pattern — ports can't cross the context bridge directly).
+ipcRenderer.on('flow:audio-port', (event) => {
+  window.postMessage('flow:audio-port', '*', event.ports);
+});

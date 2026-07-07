@@ -5,6 +5,7 @@ import { createTray } from './tray';
 import { SettingsStore } from './services/settings-store';
 import { registerIpcHandlers } from './ipc/handlers';
 import { runDemoDictation } from './dictation/demo';
+import { AudioBridge } from './services/audio-bridge';
 
 const isSmokeTest = process.argv.includes('--smoke');
 
@@ -60,7 +61,14 @@ function bootstrap(): void {
     // Overlay is created at boot and kept hidden so it can paint in <50 ms later.
     await windows.createOverlayWindow();
     const mainWindow = await windows.createMainWindow();
-    createTray(windows);
+
+    // Audio path: hand the hidden renderer a fresh port on every load
+    // (covers dev-mode reloads and renderer crashes).
+    const audio = new AudioBridge(windows);
+    audio.attach(mainWindow.webContents);
+    mainWindow.webContents.on('did-finish-load', () => audio.attach(mainWindow.webContents));
+
+    createTray(windows, audio);
     console.log('[boot] tray-ready');
 
     if (pendingDeepLink) {
@@ -69,7 +77,7 @@ function bootstrap(): void {
     }
 
     if (isSmokeTest) {
-      runSmokeChecks(windows);
+      runSmokeChecks(windows, audio);
     } else {
       // Until onboarding exists (Phase 12), show the main window on launch.
       mainWindow.show();
@@ -95,24 +103,30 @@ function extractDeepLink(argv: string[]): string | null {
   return argv.find((arg) => arg.startsWith('flowapp://')) ?? null;
 }
 
-/** `electron . --smoke`: assert both renderers load through their preloads, then exit. */
-function runSmokeChecks(windows: WindowManager): void {
+/**
+ * `electron . --smoke`: assert both renderers load through their preloads and
+ * the demo timeline completes. `--smoke-mic` additionally starts real capture
+ * and requires PCM frames to arrive over the MessagePort (needs a mic).
+ */
+function runSmokeChecks(windows: WindowManager, audio: AudioBridge): void {
+  const wantMic = process.argv.includes('--smoke-mic');
   const timeout = setTimeout(() => {
-    console.error('[smoke] FAIL: timed out waiting for renderers');
+    console.error('[smoke] FAIL: timed out');
     app.exit(1);
-  }, 15_000);
+  }, 20_000);
+
+  // Surface renderer console lines while smoking (invaluable for audio debug).
+  windows.pipeConsoleTo((line) => console.log(`[renderer] ${line}`));
 
   windows
     .whenMainLoaded()
-    .then(() => {
-      console.log('[smoke] main renderer loaded');
-      return windows.whenOverlayLoaded();
-    })
+    .then(() => windows.whenOverlayLoaded())
     .then(() => {
       console.log('[smoke] main renderer + overlay renderer loaded');
       // Drive the full overlay event path (states, levels, interims, result).
       return runDemoDictation(windows, { fast: true });
     })
+    .then(() => (wantMic ? smokeMicCheck(audio) : undefined))
     .then(() => {
       clearTimeout(timeout);
       console.log('[smoke] ok: tray-ready, renderers loaded, demo dictation completed');
@@ -123,4 +137,30 @@ function runSmokeChecks(windows: WindowManager): void {
       console.error('[smoke] FAIL:', err);
       app.exit(1);
     });
+}
+
+/** Real-capture assertion: ≥25 frames (0.5 s of audio) within 8 s. */
+function smokeMicCheck(audio: AudioBridge): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let frames = 0;
+    const unsubError = audio.onError((message) => reject(new Error(`mic: ${message}`)));
+    const unsubFrame = audio.onFrame(() => {
+      if (++frames >= 25) {
+        cleanup();
+        console.log(`[smoke] mic ok (${frames} frames received)`);
+        resolve();
+      }
+    });
+    const micTimeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`mic: only ${frames} frames within 8 s`));
+    }, 8_000);
+    const cleanup = () => {
+      clearTimeout(micTimeout);
+      unsubFrame();
+      unsubError();
+      audio.requestCapture(false);
+    };
+    audio.requestCapture(true);
+  });
 }
