@@ -12,7 +12,7 @@
 | Phase | Title | Blueprint refs | Status | Notes |
 |---|---|---|---|---|
 | 0 | Repo scaffold: pnpm monorepo, Turborepo, shared configs | §8 | done | 2026-07-07 |
-| 1 | `packages/shared`: Settings schema, IPC contract, WS protocol, ErrorKind | §7.3, §18, §19 | todo | |
+| 1 | `packages/shared`: Settings schema, IPC contract, WS protocol, ErrorKind | §7.3, §18, §19 | done | 2026-07-07 |
 | 2 | Electron shell: boots to tray, single-instance, deep-link stub, windows (main + overlay), typed IPC plumbing | §7.2, §5.5 | todo | |
 | 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | todo | |
 | 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, Silero VAD, waveform, device picker | §13.1–13.4 | todo | |
@@ -46,3 +46,14 @@
 - Project `CLAUDE.md` created (base branch main, layout, no-transcript-logging rule).
 - Verified: `pnpm install` clean in worktree; `turbo run lint` executes (0 tasks — no app packages yet, expected).
 - Note: worktree DOES tolerate `pnpm install` fine — future phases can typecheck in-worktree.
+
+### Phase 1 — done (2026-07-07)
+Built `packages/shared` (tsc-built ESM, exports `./dist`):
+- `src/errors.ts` — closed `ERROR_KINDS` taxonomy (13 kinds) + `FlowError` + `toErrorKind`.
+- `src/settings.ts` — zod `LocalSettingsSchema`/`SyncedSettingsSchema` merged into `SettingsSchema`; `DEFAULT_SETTINGS`; `parseSettings` does per-key salvage of corrupt stores; `pickSyncedSettings`; key-partition lists.
+- `src/entitlements.ts` — `Plan`, `entitlementsFor(plan)`, `quotaDecision` (ok/warn 80%/grace 100%/block 110%).
+- `src/types.ts` — SessionInfo, DictationState/Phase, HistoryEntry/Page, UpdateStatus, UndoResult, SyncStatus.
+- `src/ws-protocol.ts` — full §18 protocol as zod discriminated unions (client: session.start/finish/cancel/resume, rewrite.start, sync.push; server: ready/interim/result/error, rewrite.delta/done, subscription.updated, sync.changed, system.notice); binary audio framing `[u8 kind][u16be seq][s16le pcm]` encode/decode (PCM written via DataView — 3-byte header makes Int16Array views illegal); WS close codes; heartbeat const; safe `parseClientMessage`/`parseServerMessage`.
+- `src/ipc.ts` — `FlowInvoke`/`FlowEvents` maps per §7.3, `FlowBridge` (the `window.flow` surface), overlay allowlists (`OVERLAY_INVOKE_ALLOWLIST`/`OVERLAY_EVENT_ALLOWLIST`).
+- Tests: 13 vitest cases (settings salvage + key partition, ws parse/reject, audio-frame round-trip + seq wrap, quota bands). `turbo run build test typecheck` all green.
+- Decision: server-message `entitlements` payload kept `z.unknown()` to avoid duplicating the TS shape in zod; validated app-side.
