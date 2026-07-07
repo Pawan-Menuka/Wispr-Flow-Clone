@@ -4,6 +4,7 @@ import { WindowManager } from './windows';
 import { createTray } from './tray';
 import { SettingsStore } from './services/settings-store';
 import { registerIpcHandlers } from './ipc/handlers';
+import { runDemoDictation } from './dictation/demo';
 
 const isSmokeTest = process.argv.includes('--smoke');
 
@@ -108,8 +109,13 @@ function runSmokeChecks(windows: WindowManager): void {
       return windows.whenOverlayLoaded();
     })
     .then(() => {
+      console.log('[smoke] main renderer + overlay renderer loaded');
+      // Drive the full overlay event path (states, levels, interims, result).
+      return runDemoDictation(windows, { fast: true });
+    })
+    .then(() => {
       clearTimeout(timeout);
-      console.log('[smoke] ok: tray-ready, main renderer loaded, overlay renderer loaded');
+      console.log('[smoke] ok: tray-ready, renderers loaded, demo dictation completed');
       app.exit(0);
     })
     .catch((err: unknown) => {

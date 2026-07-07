@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { Menu, Tray, app, nativeImage } from 'electron';
 import type { WindowManager } from './windows';
+import { runDemoDictation } from './dictation/demo';
 
 let tray: Tray | null = null;
 
@@ -12,6 +13,7 @@ export function createTray(windows: WindowManager): Tray {
 
   const menu = Menu.buildFromTemplate([
     { label: 'Start dictation', enabled: false, toolTip: 'Coming in Phase 5' },
+    { label: 'Demo dictation', click: () => void runDemoDictation(windows) },
     { type: 'separator' },
     { label: 'Open Flow', click: () => windows.showMainWindow() },
     { label: 'Check for updates', enabled: false },

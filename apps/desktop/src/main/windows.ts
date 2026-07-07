@@ -57,8 +57,8 @@ export class WindowManager {
     if (this.overlayWindow && !this.overlayWindow.isDestroyed()) return this.overlayWindow;
 
     const win = new BrowserWindow({
-      width: 340,
-      height: 80,
+      width: 380,
+      height: 110, // pill + action-chips row
       show: false,
       frame: false,
       transparent: true,
@@ -93,7 +93,7 @@ export class WindowManager {
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const { x, y, width, height } = display.workArea;
     const [w, h] = win.getSize();
-    win.setPosition(Math.round(x + (width - (w ?? 340)) / 2), Math.round(y + height - (h ?? 80) - 40));
+    win.setPosition(Math.round(x + (width - (w ?? 380)) / 2), Math.round(y + height - (h ?? 110) - 40));
   }
 
   private async loadRenderer(win: BrowserWindow, page: string): Promise<void> {
@@ -120,6 +120,13 @@ export class WindowManager {
 
   hideOverlay(): void {
     this.overlayWindow?.hide();
+  }
+
+  /** Debug/smoke helper: PNG snapshot of the overlay window contents. */
+  async captureOverlay(): Promise<Buffer | null> {
+    if (!this.overlayWindow || this.overlayWindow.isDestroyed()) return null;
+    const image = await this.overlayWindow.webContents.capturePage();
+    return image.toPNG();
   }
 
   isOverlaySender(webContentsId: number): boolean {

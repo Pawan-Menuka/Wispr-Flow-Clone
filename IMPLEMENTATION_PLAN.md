@@ -14,7 +14,7 @@
 | 0 | Repo scaffold: pnpm monorepo, Turborepo, shared configs | §8 | done | 2026-07-07 |
 | 1 | `packages/shared`: Settings schema, IPC contract, WS protocol, ErrorKind | §7.3, §18, §19 | done | 2026-07-07 |
 | 2 | Electron shell: boots to tray, single-instance, deep-link stub, windows (main + overlay), typed IPC plumbing | §7.2, §5.5 | done | 2026-07-07 |
-| 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | todo | |
+| 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | done | 2026-07-07 |
 | 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, Silero VAD, waveform, device picker | §13.1–13.4 | todo | |
 | 5 | Global hotkey layer (Windows first): uiohook-napi or native hook, hold/toggle detection, DictationController state machine skeleton | §14.1, §3.1 | todo | Win-only OK for now; mac later |
 | 6 | Backend skeleton: NestJS + Fastify + Prisma schema + Redis + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | todo | docker-compose for pg/redis |
@@ -70,3 +70,12 @@ Built `apps/desktop` on **electron-vite 3** (CJS main/preload — no `"type":"mo
 - **Gotcha fixed**: pnpm 10 blocks postinstall scripts → Electron binary never downloaded; root package.json now has `pnpm.onlyBuiltDependencies: ["electron","esbuild"]`.
 - Verified: `turbo run build typecheck test` 5/5 green; `electron . --smoke` exits 0 (tray-ready + both renderers). Teardown IPC rejections in smoke stderr are the sender guard working (windows destroyed during exit), not a bug.
 - Deviation from §8: overlay entry lives at `src/renderer/overlay.html` + `src/renderer/src/overlay/` (electron-vite wants one renderer root) instead of a separate `src/overlay/` dir.
+
+### Phase 3 — done (2026-07-07)
+- `packages/ui` (tsc-built like shared): `src/tokens.css` — full §4.1 token set (light + `[data-theme=dark]`, theme-invariant `--pill-*` palette, reduced-motion zeroes durations), exported as `@flow/ui/tokens.css`; primitives `Button`/`Spinner`/`Kbd` in `src/Button.tsx`.
+- Shared contract addition: `clipboard:copyResult` invoke channel + added to `OVERLAY_INVOKE_ALLOWLIST` (Copy chip needs main-process clipboard).
+- Overlay (apps/desktop `src/renderer/src/overlay/`): `OverlayPill.tsx` renders phases armed/listening/processing+inserting/confirmed/error (+offline chip); `Waveform.tsx` — 20-bar canvas ribbon fed by `audio:level` (~30 Hz), DPR-aware, reduced-motion→static level bar; `InterimText` uses RTL-ellipsis trick to keep the newest words visible, unstable tail dimmed via `stableWords`; `ActionChips` (Undo/Copy) with `-webkit-app-region: no-drag` (pill itself is drag-region). `overlay.css` has all pill styling.
+- Main process: `src/main/dictation/demo.ts` — scripted dictation timeline (armed→listening w/ interims+levels→processing→result→confirmed→idle), exports `lastResult` consumed by the `clipboard:copyResult` handler; tray gained "Demo dictation"; overlay window now 380×110 (chips row); `WindowManager.captureOverlay()` + `FLOW_SMOKE_CAPTURE=<path>` env writes a PNG of the listening pill during `--smoke`.
+- Handlers: `clipboard:copyResult` (guarded by dictationId match), `insertion:undo` stub (`{ok:false,method:'none'}`), `rewrite:run` stub.
+- Main window imports tokens.css, pinned `data-theme=dark` until Phase 11.
+- Verified: turbo build/typecheck/test 7/7; `--smoke` (now includes fast demo run) exit 0; **overlay screenshot visually confirmed** (dark pill, animated accent waveform, dimmed unstable tail).
