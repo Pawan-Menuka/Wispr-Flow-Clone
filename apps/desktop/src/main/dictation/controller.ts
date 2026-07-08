@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DictationPhase, ErrorKind, EventChannel, FlowEvents } from '@flow/shared';
 import type { AudioFrameMsg } from '../services/audio-bridge';
+import type { SttSessionHandle } from '../services/ws-client';
 import { lastResult } from './results';
 
 /**
@@ -14,14 +15,16 @@ import { lastResult } from './results';
  *    a tap (< 300 ms) — then it latches into toggle: next tap or 2 s VAD
  *    silence finishes.
  *  - hotkeyMode 'toggle': every press toggles.
- * Phase 5 stub: "processing" produces a placeholder result from the captured
- * frames. Phases 6–7 replace finalize() with the streaming STT session.
+ * Audio streams to the backend WS session while LISTENING (§12.5 — STT runs
+ * during speech); finish() just awaits the server's result, capped by
+ * RESULT_TIMEOUT_MS before degrading to a network error.
  */
 
 const TAP_THRESHOLD_MS = 300;
 const MAX_SESSION_FRAMES = 5 * 60 * 50; // 5 min of 20 ms frames
 const CONFIRMED_LINGER_MS = 3_000;
 const ERROR_LINGER_MS = 4_000;
+const RESULT_TIMEOUT_MS = 6_000;
 
 export interface ControllerDeps {
   broadcast<K extends EventChannel>(channel: K, payload: FlowEvents[K]): void;
@@ -30,17 +33,39 @@ export interface ControllerDeps {
   requestCapture(active: boolean): void;
   takePreRoll(): AudioFrameMsg[];
   getHotkeyMode(): 'hold' | 'toggle';
+  /** Opens a backend dictation session; null when the API is unreachable. */
+  startSttSession(sessionId: string): SttSessionHandle | null;
+  /** Tier-2 insertion (§14.3). Resolves false when it degraded to clipboard. */
+  insertText(text: string): Promise<boolean>;
   now?(): number;
+}
+
+function mapWsError(code: string): ErrorKind {
+  switch (code) {
+    case 'QUOTA':
+      return 'quota-exceeded';
+    case 'UNAUTHORIZED':
+      return 'unauthorized';
+    case 'LLM_TIMEOUT':
+      return 'llm-timeout';
+    case 'NETWORK':
+      return 'network';
+    default:
+      return 'stt-failed';
+  }
 }
 
 export class DictationController {
   private phase: DictationPhase = 'idle';
   private sessionId: string | null = null;
+  private stt: SttSessionHandle | null = null;
   private latched = false; // true once the session runs in toggle mode
   private chordDownAt = 0;
   private sawSpeech = false;
-  private frames: AudioFrameMsg[] = [];
+  private frameCount = 0;
+  private lastSeq = 0;
   private lingerTimer: ReturnType<typeof setTimeout> | null = null;
+  private resultTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly deps: ControllerDeps) {}
 
@@ -82,8 +107,9 @@ export class DictationController {
 
   cancel(): void {
     if (this.phase === 'idle') return;
-    this.clearLinger();
+    this.clearTimers();
     this.deps.requestCapture(false);
+    this.stt?.cancel();
     this.reset();
   }
 
@@ -99,10 +125,11 @@ export class DictationController {
   }
 
   onFrame(frame: AudioFrameMsg): void {
-    if (!this.sessionId) return;
+    if (!this.sessionId || !this.stt) return;
     if (this.phase !== 'armed' && this.phase !== 'listening') return;
-    this.frames.push(frame);
-    if (this.frames.length >= MAX_SESSION_FRAMES) this.finish();
+    this.stt.sendAudio(frame.seq, frame.pcm);
+    this.lastSeq = frame.seq;
+    if (++this.frameCount >= MAX_SESSION_FRAMES) this.finish();
   }
 
   onCaptureError(message: string): void {
@@ -113,12 +140,53 @@ export class DictationController {
   // ---------- Transitions ----------
 
   private begin(): void {
-    this.clearLinger();
-    this.sessionId = randomUUID();
+    this.clearTimers();
+    const id = randomUUID();
+    const stt = this.deps.startSttSession(id);
+    if (!stt) {
+      this.sessionId = id;
+      this.setPhase('armed'); // brief flash so the error has a visible home
+      this.deps.showOverlay();
+      this.fail('network', "Can't reach Flow — check your connection");
+      return;
+    }
+
+    this.sessionId = id;
+    this.stt = stt;
     this.latched = false;
     this.sawSpeech = false;
+    this.frameCount = 0;
+    this.lastSeq = 0;
     this.chordDownAt = this.now();
-    this.frames = this.deps.takePreRoll();
+
+    stt.onInterim(({ text, stableWords }) => {
+      if (this.sessionId === id) {
+        this.deps.broadcast('dictation:interim', { text, stableWords });
+      }
+    });
+    stt.onResult((result) => {
+      if (this.sessionId === id) this.onServerResult(result.finalText);
+    });
+    stt.onError((code, message, rawTextSoFar) => {
+      if (this.sessionId === id) {
+        this.deps.broadcast('dictation:error', {
+          kind: mapWsError(code),
+          message,
+          ...(rawTextSoFar ? { rawText: rawTextSoFar } : {}),
+        });
+        this.deps.requestCapture(false);
+        this.setPhase('error', { kind: mapWsError(code), message });
+        this.lingerTimer = setTimeout(() => {
+          if (this.phase === 'error') this.reset();
+        }, ERROR_LINGER_MS);
+      }
+    });
+
+    // Pre-roll only carries frames when capture idles armed (releaseMicImmediately=false path).
+    for (const frame of this.deps.takePreRoll()) {
+      stt.sendAudio(frame.seq, frame.pcm);
+    }
+
     this.setPhase('armed');
     this.deps.showOverlay();
     this.deps.requestCapture(true);
@@ -129,28 +197,47 @@ export class DictationController {
     this.deps.requestCapture(false);
 
     if (!this.sawSpeech) {
+      this.stt?.cancel();
       this.fail('no-speech', "Didn't catch anything — hold the key and speak");
       return;
     }
 
     this.setPhase('processing');
-    void this.finalize();
+    this.stt?.finish(this.lastSeq);
+    this.resultTimer = setTimeout(() => {
+      if (this.phase === 'processing') {
+        this.fail('network', 'Timed out waiting for the transcript');
+      }
+    }, RESULT_TIMEOUT_MS);
   }
 
-  /**
-   * Phase 5 stub finalization. Phases 6–7 replace this with the WS streaming
-   * session (audio already streamed during LISTENING; this just awaits the
-   * server result).
-   */
-  private async finalize(): Promise<void> {
+  private onServerResult(text: string): void {
+    this.clearTimers();
     const id = this.sessionId!;
-    const durationMs = this.frames.length * 20;
-    const voiced = this.frames.filter((frame) => frame.speaking).length;
-    const text = `[stub] heard ${(voiced * 20 / 1000).toFixed(1)}s of speech (${durationMs / 1000}s captured) — STT arrives in Phase 7`;
-
     lastResult.id = id;
     lastResult.text = text;
     this.deps.broadcast('dictation:result', { id, text, appName: null });
+
+    if (!text.trim()) {
+      this.confirm();
+      return;
+    }
+
+    this.setPhase('inserting');
+    void this.deps
+      .insertText(text)
+      .then((ok) => {
+        if (this.sessionId !== id) return; // cancelled/superseded meanwhile
+        if (ok) this.confirm();
+        else this.fail('insertion-failed', 'Copied to clipboard — press Ctrl+V to paste');
+      })
+      .catch(() => {
+        if (this.sessionId !== id) return;
+        this.fail('insertion-failed', 'Copied to clipboard — press Ctrl+V to paste');
+      });
+  }
+
+  private confirm(): void {
     this.setPhase('confirmed');
     this.lingerTimer = setTimeout(() => {
       if (this.phase === 'confirmed') this.reset();
@@ -158,6 +245,7 @@ export class DictationController {
   }
 
   private fail(kind: ErrorKind, message: string): void {
+    this.clearTimers();
     this.deps.broadcast('dictation:error', { kind, message });
     this.setPhase('error', { kind, message });
     this.lingerTimer = setTimeout(() => {
@@ -167,7 +255,8 @@ export class DictationController {
 
   private reset(): void {
     this.sessionId = null;
-    this.frames = [];
+    this.stt = null;
+    this.frameCount = 0;
     this.latched = false;
     this.setPhase('idle');
     this.deps.hideOverlay();
@@ -182,10 +271,14 @@ export class DictationController {
     });
   }
 
-  private clearLinger(): void {
+  private clearTimers(): void {
     if (this.lingerTimer) {
       clearTimeout(this.lingerTimer);
       this.lingerTimer = null;
+    }
+    if (this.resultTimer) {
+      clearTimeout(this.resultTimer);
+      this.resultTimer = null;
     }
   }
 

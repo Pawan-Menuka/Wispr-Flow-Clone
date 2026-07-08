@@ -1,0 +1,185 @@
+// Flow database schema — BLUEPRINT §10 is the spec, this file is the truth.
+// Run `pnpm db:generate` after changes; `pnpm db:migrate` against local compose PG.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  PRO
+  TEAM
+}
+
+model User {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  name             String?
+  avatarUrl        String?
+  plan             Plan      @default(FREE) // denormalized entitlement snapshot
+  planExpiresAt    DateTime?
+  stripeCustomerId String?   @unique
+  settingsJson     Json      @default("{}") // synced settings doc (§19), zod-validated app-side
+  createdAt        DateTime  @default(now())
+  deletedAt        DateTime? // soft delete; hard-delete job after 30 d
+
+  authProviders AuthProvider[]
+  devices       Device[]
+  dictations    Dictation[]
+  dictionary    DictionaryEntry[]
+  snippets      Snippet[]
+  appRules      AppRule[]
+  subscription  Subscription?
+  usageEvents   UsageEvent[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+
+  @@index([stripeCustomerId])
+}
+
+model AuthProvider {
+  id         String @id @default(uuid())
+  userId     String
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   String // 'google' | 'apple' | 'email'
+  providerId String // sub claim or email
+
+  @@unique([provider, providerId])
+}
+
+model Device {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String // "Mihijith's laptop"
+  platform   String // win32 | darwin | linux
+  appVersion String
+  lastSeenAt DateTime  @updatedAt
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  refreshTokens RefreshToken[]
+
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique // sha256; raw token never stored
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId  String
+  device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  familyId  String // rotation family — reuse detection (§11.3)
+  expiresAt DateTime
+  rotatedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+// Synced history — TEXT ONLY, opt-in. Never audio, never window titles (§15).
+model Dictation {
+  id         String   @id // client-generated UUID (idempotent sync)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId   String?
+  finalText  String
+  appName    String? // process name only
+  language   String   @default("en")
+  wordCount  Int
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model DictionaryEntry {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phrase    String
+  hint      String? // phonetic/context hint
+  language  String   @default("en")
+  source    String   @default("manual") // manual | suggested
+  useCount  Int      @default(0) // drives top-200 prompt injection
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, phrase, language])
+}
+
+model Snippet {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trigger   String // "insert my address"
+  body      String // template with {vars}
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, trigger])
+}
+
+model AppRule {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appMatch  String // process name or title regex
+  profile   String // casual|formal|code|off|custom:<id>
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, appMatch])
+}
+
+model Subscription {
+  id                   String   @id @default(uuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id])
+  stripeSubscriptionId String   @unique
+  status               String // active|trialing|past_due|canceled
+  priceId              String
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean  @default(false)
+  updatedAt            DateTime @updatedAt
+}
+
+// Append-only; partition by month at scale (§9.3).
+model UsageEvent {
+  id          BigInt   @id @default(autoincrement())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  deviceId    String?
+  kind        String // dictation|rewrite|command
+  wordCount   Int
+  durationMs  Int
+  latencyMs   Int? // finish→result, for SLO tracking
+  sttProvider String?
+  llmModel    String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Stripe webhook idempotency ledger (§20).
+model StripeEvent {
+  id          String   @id // stripe event id
+  type        String
+  processedAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String // login|logout|device.revoke|data.delete|plan.change
+  ip        String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

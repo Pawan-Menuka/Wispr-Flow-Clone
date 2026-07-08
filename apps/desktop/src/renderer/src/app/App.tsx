@@ -44,7 +44,20 @@ export function App() {
         </dd>
       </dl>
       {settings ? <MicSection settings={settings} /> : null}
+      {new URLSearchParams(location.search).has('smoke') ? <SmokeInsertTarget /> : null}
     </div>
+  );
+}
+
+/** Paste target for `--smoke-insert` — rendered only in smoke runs. */
+function SmokeInsertTarget() {
+  return (
+    <input
+      autoFocus
+      placeholder="smoke insert target"
+      onChange={(e) => console.warn(`insert-target: ${e.target.value}`)}
+      style={{ marginTop: 24, padding: 8, width: 300, display: 'block' }}
+    />
   );
 }
 

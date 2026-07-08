@@ -3,12 +3,73 @@ import type { EventChannel, FlowEvents } from '@flow/shared';
 import { DictationController } from './controller';
 import type { ControllerDeps } from './controller';
 import type { AudioFrameMsg } from '../services/audio-bridge';
+import type { SttSessionHandle } from '../services/ws-client';
 
 type Broadcast = { channel: EventChannel; payload: unknown };
 
-function makeDeps(mode: 'hold' | 'toggle' = 'hold') {
+class FakeStt implements SttSessionHandle {
+  sent: number[] = [];
+  finished: number | null = null;
+  cancelled = false;
+  private interimCb: ((i: { text: string; stableWords: number }) => void) | null = null;
+  private resultCb:
+    | ((r: {
+        finalText: string;
+        formatted: boolean;
+        wordCount: number;
+        durationMs: number;
+        latencyMs: number;
+      }) => void)
+    | null = null;
+  private errorCb: ((code: string, message: string) => void) | null = null;
+
+  sendAudio(seq: number): void {
+    this.sent.push(seq);
+  }
+  finish(lastSeq: number): void {
+    this.finished = lastSeq;
+  }
+  cancel(): void {
+    this.cancelled = true;
+  }
+  onReady(): void {}
+  onInterim(cb: (i: { text: string; stableWords: number }) => void): void {
+    this.interimCb = cb;
+  }
+  onResult(
+    cb: (r: {
+      finalText: string;
+      formatted: boolean;
+      wordCount: number;
+      durationMs: number;
+      latencyMs: number;
+    }) => void,
+  ): void {
+    this.resultCb = cb;
+  }
+  onError(cb: (code: string, message: string) => void): void {
+    this.errorCb = cb;
+  }
+
+  emitInterim(text: string, stableWords = 0): void {
+    this.interimCb?.({ text, stableWords });
+  }
+  emitResult(finalText: string): void {
+    this.resultCb?.({ finalText, formatted: true, wordCount: 2, durationMs: 500, latencyMs: 90 });
+  }
+  emitError(code: string, message = 'boom'): void {
+    this.errorCb?.(code, message);
+  }
+}
+
+function makeDeps(
+  mode: 'hold' | 'toggle' = 'hold',
+  opts: { connected?: boolean; insertOk?: boolean } = {},
+) {
+  const { connected = true, insertOk = true } = opts;
   const broadcasts: Broadcast[] = [];
-  const calls = { show: 0, hide: 0, capture: [] as boolean[] };
+  const calls = { show: 0, hide: 0, capture: [] as boolean[], inserted: [] as string[] };
+  let stt: FakeStt | null = null;
   const deps: ControllerDeps = {
     broadcast: <K extends EventChannel>(channel: K, payload: FlowEvents[K]) => {
       broadcasts.push({ channel, payload });
@@ -18,12 +79,28 @@ function makeDeps(mode: 'hold' | 'toggle' = 'hold') {
     requestCapture: (active) => void calls.capture.push(active),
     takePreRoll: () => [],
     getHotkeyMode: () => mode,
+    startSttSession: () => {
+      if (!connected) return null;
+      stt = new FakeStt();
+      return stt;
+    },
+    insertText: (text) => {
+      calls.inserted.push(text);
+      return Promise.resolve(insertOk);
+    },
   };
-  return { deps, broadcasts, calls };
+  return { deps, broadcasts, calls, getStt: () => stt };
 }
 
-function frame(speaking: boolean): AudioFrameMsg {
-  return { seq: 0, speaking, rms: speaking ? 0.2 : 0.01, pcm: new Int16Array(320) };
+/** Drain microtasks (insertText resolution) under fake timers. */
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function frame(seq: number, speaking: boolean): AudioFrameMsg {
+  return { seq, speaking, rms: speaking ? 0.2 : 0.01, pcm: new Int16Array(320) };
 }
 
 function phases(broadcasts: Broadcast[]): string[] {
@@ -36,8 +113,8 @@ describe('DictationController', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('push-to-talk: hold, speak, release → result → confirmed → idle', () => {
-    const { deps, broadcasts, calls } = makeDeps('hold');
+  it('push-to-talk: hold, speak, release → result → inserted → confirmed → idle', async () => {
+    const { deps, broadcasts, calls, getStt } = makeDeps('hold');
     const controller = new DictationController(deps);
 
     controller.onChordDown();
@@ -45,85 +122,136 @@ describe('DictationController', () => {
     expect(calls.capture).toEqual([true]);
 
     controller.onVad(true);
-    controller.onFrame(frame(true));
-    vi.advanceTimersByTime(500); // held past the tap threshold
-    vi.setSystemTime(Date.now()); // keep Date.now aligned with fake timers
+    controller.onFrame(frame(0, true));
+    controller.onFrame(frame(1, true));
+    vi.advanceTimersByTime(500);
     controller.onChordUp();
 
-    expect(calls.capture).toEqual([true, false]);
-    expect(phases(broadcasts)).toEqual(['armed', 'listening', 'processing', 'confirmed']);
-    expect(broadcasts.some((b) => b.channel === 'dictation:result')).toBe(true);
+    const stt = getStt()!;
+    expect(stt.sent).toEqual([0, 1]);
+    expect(stt.finished).toBe(1); // lastSeq
+    expect(controller.currentPhase).toBe('processing');
+
+    stt.emitResult('Hello world.');
+    await flush();
+    expect(phases(broadcasts)).toEqual([
+      'armed',
+      'listening',
+      'processing',
+      'inserting',
+      'confirmed',
+    ]);
+    expect(calls.inserted).toEqual(['Hello world.']);
+    const result = broadcasts.find((b) => b.channel === 'dictation:result');
+    expect((result?.payload as { text: string }).text).toBe('Hello world.');
 
     vi.advanceTimersByTime(3000);
-    expect(phases(broadcasts)).toContain('idle');
+    expect(controller.currentPhase).toBe('idle');
     expect(calls.hide).toBe(1);
   });
 
+  it('insertion failure degrades to clipboard message', async () => {
+    const { deps, broadcasts, getStt } = makeDeps('hold', { insertOk: false });
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    controller.onVad(true);
+    controller.onFrame(frame(0, true));
+    vi.advanceTimersByTime(500);
+    controller.onChordUp();
+    getStt()!.emitResult('Hello.');
+    await flush();
+
+    expect(controller.currentPhase).toBe('error');
+    const error = broadcasts.find((b) => b.channel === 'dictation:error');
+    expect((error?.payload as { kind: string }).kind).toBe('insertion-failed');
+  });
+
+  it('relays interims while listening', () => {
+    const { deps, broadcasts, getStt } = makeDeps('hold');
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    getStt()!.emitInterim('hello wor', 1);
+    const interim = broadcasts.find((b) => b.channel === 'dictation:interim');
+    expect((interim?.payload as { text: string }).text).toBe('hello wor');
+  });
+
   it('tap latches into toggle; VAD silence finishes', () => {
-    const { deps, broadcasts } = makeDeps('hold');
+    const { deps, getStt } = makeDeps('hold');
     const controller = new DictationController(deps);
 
     controller.onChordDown();
     controller.onChordUp(); // instant release = tap → latched
     controller.onVad(true);
-    controller.onFrame(frame(true));
+    controller.onFrame(frame(0, true));
     expect(controller.currentPhase).toBe('listening');
 
-    controller.onVad(false); // hangover elapsed → silence ends the session
-    expect(phases(broadcasts)).toContain('processing');
+    controller.onVad(false);
+    expect(controller.currentPhase).toBe('processing');
+    expect(getStt()!.finished).toBe(0);
   });
 
-  it('second tap ends a latched session', () => {
-    const { deps, broadcasts } = makeDeps('hold');
-    const controller = new DictationController(deps);
-
-    controller.onChordDown();
-    controller.onChordUp(); // tap
-    controller.onVad(true);
-    controller.onChordDown(); // second tap finishes
-    // The stub finalize() is synchronous, so processing has already resolved.
-    expect(phases(broadcasts)).toContain('processing');
-    expect(controller.currentPhase).toBe('confirmed');
-  });
-
-  it('no speech → no-speech error, then back to idle', () => {
-    const { deps, broadcasts, calls } = makeDeps('hold');
+  it('no speech → cancels the session and reports no-speech', () => {
+    const { deps, broadcasts, getStt } = makeDeps('hold');
     const controller = new DictationController(deps);
 
     controller.onChordDown();
     vi.advanceTimersByTime(500);
-    vi.setSystemTime(Date.now());
     controller.onChordUp();
 
     expect(controller.currentPhase).toBe('error');
+    expect(getStt()!.cancelled).toBe(true);
     const error = broadcasts.find((b) => b.channel === 'dictation:error');
     expect((error?.payload as { kind: string }).kind).toBe('no-speech');
-
-    vi.advanceTimersByTime(4000);
-    expect(controller.currentPhase).toBe('idle');
-    expect(calls.hide).toBe(1);
   });
 
-  it('cancel stops capture and hides immediately', () => {
-    const { deps, calls } = makeDeps('hold');
+  it('API unreachable → immediate network error', () => {
+    const { deps, broadcasts } = makeDeps('hold', { connected: false });
     const controller = new DictationController(deps);
+    controller.onChordDown();
+    expect(controller.currentPhase).toBe('error');
+    const error = broadcasts.find((b) => b.channel === 'dictation:error');
+    expect((error?.payload as { kind: string }).kind).toBe('network');
+  });
 
+  it('server error during processing maps codes to ErrorKind', () => {
+    const { deps, broadcasts, getStt } = makeDeps('hold');
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    controller.onVad(true);
+    controller.onFrame(frame(0, true));
+    vi.advanceTimersByTime(500);
+    controller.onChordUp();
+
+    getStt()!.emitError('QUOTA', 'limit reached');
+    expect(controller.currentPhase).toBe('error');
+    const error = broadcasts.find((b) => b.channel === 'dictation:error');
+    expect((error?.payload as { kind: string }).kind).toBe('quota-exceeded');
+  });
+
+  it('result timeout degrades to a network error', () => {
+    const { deps } = makeDeps('hold');
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    controller.onVad(true);
+    controller.onFrame(frame(0, true));
+    vi.advanceTimersByTime(500);
+    controller.onChordUp();
+    expect(controller.currentPhase).toBe('processing');
+
+    vi.advanceTimersByTime(6000);
+    expect(controller.currentPhase).toBe('error');
+  });
+
+  it('cancel stops capture and cancels the session', () => {
+    const { deps, calls, getStt } = makeDeps('hold');
+    const controller = new DictationController(deps);
     controller.onChordDown();
     controller.onVad(true);
     controller.cancel();
 
     expect(controller.currentPhase).toBe('idle');
     expect(calls.capture).toEqual([true, false]);
+    expect(getStt()!.cancelled).toBe(true);
     expect(calls.hide).toBe(1);
-  });
-
-  it('mic failure during a session surfaces no-mic', () => {
-    const { deps, broadcasts } = makeDeps('hold');
-    const controller = new DictationController(deps);
-
-    controller.onChordDown();
-    controller.onCaptureError('device lost');
-    const error = broadcasts.find((b) => b.channel === 'dictation:error');
-    expect((error?.payload as { kind: string }).kind).toBe('no-mic');
   });
 });

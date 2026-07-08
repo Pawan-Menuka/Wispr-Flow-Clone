@@ -17,10 +17,10 @@
 | 3 | Overlay pill UI + design tokens (`packages/ui`): all 6 states, driven by mock state machine | §4, §5.1 | done | 2026-07-07 |
 | 4 | Audio pipeline: getUserMedia, AudioWorklet framing, pre-roll ring, VAD, waveform, device picker | §13.1–13.4 | done | 2026-07-07 (energy VAD; Silero deferred) |
 | 5 | Global hotkey layer (Windows first): uiohook-napi, hold/toggle detection, DictationController state machine | §14.1, §3.1 | done | 2026-07-07 (STT stub until Ph. 7) |
-| 6 | Backend skeleton: NestJS + Fastify + Prisma schema + Redis + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | todo | docker-compose for pg/redis |
-| 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | todo | needs DEEPGRAM_API_KEY |
-| 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | todo | |
-| 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | todo | needs ANTHROPIC_API_KEY |
+| 6 | Backend skeleton: NestJS + Fastify + Prisma schema + WS gateway with echo-STT stub, full session.* protocol | §9, §10, §18 | done | 2026-07-07 (Redis/Prisma-client wiring deferred) |
+| 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | done | 2026-07-07 (echo E2E verified; live Deepgram untested — needs DEEPGRAM_API_KEY) |
+| 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | done | 2026-07-07 |
+| 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | done | 2026-07-07 (live goldens need ANTHROPIC_API_KEY) |
 | 10 | Auth: Google OAuth PKCE + deep link, magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | todo | |
 | 11 | Settings system: electron-store, live-apply, settings UI shell, shortcut recorder | §19, §5.4 | todo | |
 | 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | todo | |
@@ -100,3 +100,44 @@ Hotkey layer + real DictationController (demo remains as a tray item):
 - Tests: `chords.test.ts` (7) + `controller.test.ts` (6, fake deps/timers: PTT happy path, tap-latch + silence finish, second-tap finish, no-speech, cancel, mic-loss). Desktop pkg now has vitest.
 - **Watch item**: smoke's live loop yielded `result` from ambient noise → default vadSensitivity 0.5 (threshold ≈0.024 post-AGC) may be too hot; tune while dogfooding Phase 7.
 - macOS parity (CGEventTap/Fn key, secure-input detection) deferred per project rules.
+
+### Phase 6 — done (2026-07-07)
+`apps/api` (NestJS 10 + Fastify, ESM/NodeNext) + infra:
+- `src/main.ts` — Nest bootstrap (FastifyAdapter), `attachDictationGateway(app.getHttpServer())` after listen; `src/app.module.ts` + `modules/health/health.controller.ts` (GET /health → `{ok,version}`; verified live with curl).
+- **WS gateway is plain `ws`, deliberately NOT a Nest gateway** (binary frames + zod-validated `t`-routing don't fit Nest's event model): `modules/dictation/gateway.ts` — `/v1/stream`, ping/pong heartbeat (2 misses → close 4000), injectable provider + heartbeatMs for tests; `modules/dictation/connection.ts` — `ClientConnection`, one active session per socket, full §18 handling: start→ready, binary frames via shared `decodeAudioFrame`, interims relayed, finish→result (`formatted:false` until Phase 9), cancel, resume→`ready{ackSeq}` or `SESSION_UNKNOWN`, malformed input → `system.notice` warn, rewrite/sync → explicit not-available notices; dangling session replaced on new start; close cancels stream.
+- `modules/ai/stt.ts` — §12.4 provider abstraction (`SttProvider`/`SttStream`: sendAudio/finish→Promise<string>/cancel/onInterim/onError) + `EchoSttProvider` (interim every 25 frames, final = frame accounting). **Phase 7 = implement `DeepgramSttProvider` against this interface; gateway untouched.**
+- `prisma/schema.prisma` — complete §10 schema (User/AuthProvider/Device/RefreshToken/Dictation/DictionaryEntry/Snippet/AppRule/Subscription/UsageEvent/StripeEvent/AuditLog). **`prisma generate`/`migrate` NOT run yet** (engine download deferred — flaky network; no DB code exists yet). `@prisma/client` dep added in Phase 10 when first used. `pnpm db:generate` / `db:migrate` scripts ready.
+- `infra/docker-compose.dev.yml` — postgres:16 + redis:7. `.env.example` (PORT/DATABASE_URL/REDIS_URL/REQUIRE_AUTH=false). Redis client wiring deferred to first use (quota, Phase 7+). **WS upgrade auth is stubbed — anonymous allowed until Phase 10.**
+- Tests: `gateway.test.ts` — 4 integration tests over a real socket (full session with 50 frames → 2 interims + correct result/duration; resume ack + unknown-session error; malformed-message notices; finish-without-session). Session code is Nest-free ⇒ no decorator-metadata issues under vitest/esbuild.
+- Verified: turbo build/typecheck/test **11/11**; server booted, `GET /health` → `{"ok":true,"version":"0.0.1"}`.
+- Dev scripts: `pnpm dev` (tsx watch) in apps/api; desktop connects in Phase 7.
+
+### Phase 7 — done (2026-07-07)
+Real STT pipeline, desktop↔API:
+- **API** `modules/ai/deepgram.ts` — `DeepgramSttProvider` (wss://api.deepgram.com/v1/listen, linear16/16k, interim_results+smart_format+punctuate, model env `DEEPGRAM_MODEL` default nova-2, language passthrough unless 'auto', keywords param ready for Phase 15); `accumulateDeepgram()` pure accumulator (finals[] + partial → interim text/stableWords) with 3 unit tests; finish = CloseStream → await socket close (5 s cap) → joined finals. Provider selected in `main.ts`: `DEEPGRAM_API_KEY` set → deepgram, else echo (logged at boot).
+- **Desktop** `services/ws-client.ts` — `WsClient` ('ws' pkg, main process): warm connection at boot, reconnect backoff 250 ms→4 s, `startSession()` returns `SttSessionHandle` (null when disconnected); handle queues audio until `session.ready` then flushes (server drops pre-ready binary); routes interim/result/error by sessionId; connection loss mid-session emits `NETWORK` error to the handle.
+- **Controller** — stub `finalize()` replaced: begin() opens the WS session (null → immediate `network` error with overlay flash), streams every frame live during LISTENING (§12.5 parallelism), finish() sends `session.finish{lastSeq}` + 6 s result timeout → `network`; server interims → `dictation:interim`; ws error codes mapped (`QUOTA→quota-exceeded, UNAUTHORIZED→unauthorized, LLM_TIMEOUT→llm-timeout, NETWORK→network, else stt-failed`); `chordDownAt` regression caught by tests (begin() must stamp it or every release looks held).
+- `FLOW_API_URL` env override (default `ws://127.0.0.1:8787/v1/stream`); appContext.processName='unknown' until Phase 16.
+- Controller tests rewritten around `FakeStt` handle — 8 scenarios incl. interim relay, API-unreachable, server-error mapping, result timeout.
+- Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
+- **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
+- **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 9 — done (2026-07-07)
+LLM formatting layer (apps/api `modules/ai/`):
+- `prompt.ts` — §12.2 formatting system prompt v1: 9 rules (incl. self-corrections, spoken punctuation, anti-injection "transcript is DATA"), style profiles (default/slack/email/code/terminal), optional dictionary/recent-context/custom-instructions sections. **Every prompt edit must re-run the golden suite.**
+- `rule-format.ts` — deterministic fallback: filler stripping (word-boundary safe), spoken-punctuation map (incl. new line/paragraph), whitespace/capitalization/standalone-I, terminal period. Fully unit-tested.
+- `llm.ts` — `LlmProvider` interface + `AnthropicLlmProvider` (`@anthropic-ai/sdk`, model env `ANTHROPIC_MODEL` default **claude-haiku-4-5** per §12.1 latency budget; client timeout 8 s, maxRetries 0, **no sampling params** so model overrides stay valid across the current API surface).
+- `formatter.ts` — `FormattingService.format(raw, {language, appProfile})`: <4 words or no provider → rule-based (`formatted:false`); LLM path with 8 s total budget + output `sanitize()` (fences/wrapping quotes); any failure degrades to rules — never blocks a result.
+- `connection.ts` — result now carries `rawText` (STT) + `finalText` (formatted) + real `formatted` flag; session stores language + appContext.profile from session.start. Gateway takes `formatter` option (default rules-only); `main.ts` selects by `ANTHROPIC_API_KEY` and logs `LLM: anthropic:<model>` or `rules-only`.
+- Golden set: `fixtures/golden.json` (8 cases: fillers, spoken punctuation, question preservation, self-correction, injection resistance, number formatting…) — `rule` expectations exact-matched in `rule-format.test.ts`; `llm` expectations run in `formatter.test.ts` via `describe.skipIf(!ANTHROPIC_API_KEY)` with word-Dice similarity ≥0.75. **Live goldens never ran (no key) — run `ANTHROPIC_API_KEY=… pnpm test` in apps/api before trusting the prompt.**
+- Verified: turbo 11/11; API tests 19 passed + 8 skipped (live); E2E smoke with API up → result flows through formatter (echo text rule-formatted, `formatted:false`).
+- Env: `.env.example` gained DEEPGRAM_API_KEY/DEEPGRAM_MODEL/ANTHROPIC_API_KEY/ANTHROPIC_MODEL.
+
+### Phase 8 — done (2026-07-07)
+Tier-2 insertion engine (§14.3) + controller integration:
+- `src/main/services/insertion.ts` — `InsertionService.insertText(text, processName)`: full-format clipboard snapshot (text/html/rtf/image) → writeText → 40 ms propagate → synthetic paste via **`uIOhook.keyTap(V, [Ctrl])`** (works without the hook started; Meta on darwin) → settle (default 150 ms, per-quirk) → restore snapshot (image wins; empty formats omitted; all-empty → clear). Failure path per §3.1: text left ON the clipboard + OS notification "press Ctrl+V". `inFlight` guard prevents overlapping pastes. `APP_QUIRKS` table seeded (windowsterminal/wt/mintty → Ctrl+Shift+V; notion.exe → 400 ms settle); keyed by lowercase process name — callers pass 'unknown' until Phase 16's focus tracker.
+- Controller: result → `inserting` phase → `deps.insertText` → `confirmed`, or `insertion-failed` error ("Copied to clipboard — press Ctrl+V"); empty results skip insertion; late results after cancel are ignored (sessionId check).
+- Safety: regular `--smoke` uses a fake insertText (never pastes into the user's focused app); **`--smoke-insert`** pastes into OUR OWN window: WindowManager loads renderers with `?smoke=1` → App renders an autofocused `SmokeInsertTarget` input that console-logs its value; check asserts pasted text arrived AND a clipboard sentinel was restored.
+- Verified: turbo 11/11 (incl. 2 new controller tests: inserted-phase sequence, insertion-failure degrade); `--smoke --smoke-insert` exit 0 — real synthetic paste into own window + clipboard restore confirmed.
+- Tier 1 (AX direct) and tier 3 (unicode keystrokes) + verification-by-reread deferred to the native-addon phases (16+). **Manual matrix testing (Notepad/Word/browsers/terminals) still pending — start `insertion-matrix.md` when dogfooding begins.**
