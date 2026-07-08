@@ -5,6 +5,7 @@ import type { InvokeChannel, Settings } from '@flow/shared';
 import { OVERLAY_INVOKE_ALLOWLIST, SettingsSchema } from '@flow/shared';
 import type { SettingsStore } from '../services/settings-store';
 import type { WindowManager } from '../windows';
+import type { AuthService } from '../services/auth';
 import { lastResult } from '../dictation/results';
 import type { DictationController } from '../dictation/controller';
 
@@ -12,6 +13,7 @@ interface IpcContext {
   windows: WindowManager;
   settings: SettingsStore;
   controller: DictationController;
+  auth: AuthService;
 }
 
 /** Domains the renderer may ask the OS browser to open (BLUEPRINT §15). */
@@ -24,7 +26,7 @@ const EXTERNAL_URL_ALLOWLIST = ['https://github.com/', 'https://flow.app/'];
  *  3. zod-validates its arguments before touching main-process state.
  */
 export function registerIpcHandlers(ctx: IpcContext): void {
-  const { windows, settings, controller } = ctx;
+  const { windows, settings, controller, auth } = ctx;
 
   function handle<K extends InvokeChannel>(
     channel: K,
@@ -84,8 +86,17 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   // ---------- Dictation ----------
   handle('dictation:cancel', z.tuple([]), () => controller.cancel());
 
+  // ---------- Auth (§11) ----------
+  handle('auth:getSession', z.tuple([]), () => auth.getSession());
+  handle('auth:sendMagicLink', z.tuple([z.string().email()]), (_e, email) =>
+    auth.sendMagicLink(email as string),
+  );
+  handle('auth:submitMagicCode', z.tuple([z.string().email(), z.string().length(6)]), (_e, email, code) =>
+    auth.submitMagicCode(email as string, code as string),
+  );
+  handle('auth:logout', z.tuple([]), () => auth.logout());
+
   // ---------- Stubs (implemented in later phases; registered so the contract is live) ----------
-  handle('auth:getSession', z.tuple([]), () => null); // Phase 10
   handle('insertion:undo', z.tuple([]), () => ({
     ok: false,
     method: 'none',

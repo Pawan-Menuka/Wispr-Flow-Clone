@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Settings } from '@flow/shared';
+import type { SessionInfo, Settings } from '@flow/shared';
 import { capture, listMicrophones } from '../audio/capture';
 
 /**
@@ -43,11 +43,114 @@ export function App() {
           </button>
         </dd>
       </dl>
+      <AccountSection />
       {settings ? <MicSection settings={settings} /> : null}
       {new URLSearchParams(location.search).has('smoke') ? <SmokeInsertTarget /> : null}
     </div>
   );
 }
+
+/** Magic-link sign-in (§11). Becomes the onboarding auth step in Phase 12. */
+function AccountSection() {
+  const [session, setSession] = useState<SessionInfo | null>(null);
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [stage, setStage] = useState<'email' | 'code'>('email');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void window.flow.invoke('auth:getSession').then(setSession);
+    return window.flow.on('session:changed', setSession);
+  }, []);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (session) {
+    return (
+      <div style={sectionStyle}>
+        <h2 style={{ fontSize: 16, fontWeight: 600 }}>Account</h2>
+        <p>
+          Signed in as <strong>{session.user.email}</strong> ({session.entitlements.plan})
+        </p>
+        <button style={styles.button} onClick={() => void window.flow.invoke('auth:logout')}>
+          Sign out
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={sectionStyle}>
+      <h2 style={{ fontSize: 16, fontWeight: 600 }}>Account</h2>
+      {stage === 'email' ? (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            style={inputStyle}
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <button
+            style={styles.button}
+            disabled={busy || !email.includes('@')}
+            onClick={() =>
+              void run(async () => {
+                await window.flow.invoke('auth:sendMagicLink', email);
+                setStage('code');
+              })
+            }
+          >
+            Send code
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            style={inputStyle}
+            placeholder="6-digit code"
+            value={code}
+            maxLength={6}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+          />
+          <button
+            style={styles.button}
+            disabled={busy || code.length !== 6}
+            onClick={() =>
+              void run(() => window.flow.invoke('auth:submitMagicCode', email, code))
+            }
+          >
+            Sign in
+          </button>
+          <button style={{ ...styles.button, background: 'transparent' }} onClick={() => setStage('email')}>
+            back
+          </button>
+        </div>
+      )}
+      {error ? <p style={{ color: '#d64545', fontSize: 13 }}>{error}</p> : null}
+    </div>
+  );
+}
+
+const sectionStyle: React.CSSProperties = { marginTop: 40, maxWidth: 420 };
+const inputStyle: React.CSSProperties = {
+  flex: 1,
+  padding: '8px 10px',
+  borderRadius: 6,
+  background: '#1f1f22',
+  color: '#f2f2f3',
+  border: '1px solid rgba(255,255,255,0.2)',
+};
 
 /** Paste target for `--smoke-insert` — rendered only in smoke runs. */
 function SmokeInsertTarget() {

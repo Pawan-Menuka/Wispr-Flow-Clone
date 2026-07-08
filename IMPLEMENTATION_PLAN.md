@@ -21,7 +21,7 @@
 | 7 | Deepgram streaming STT integration + interim relay → end-to-end raw dictation shown in overlay | §12.1, §12.4, §13.6–13.7 | done | 2026-07-07 (echo E2E verified; live Deepgram untested — needs DEEPGRAM_API_KEY) |
 | 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | done | 2026-07-07 |
 | 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | done | 2026-07-07 (live goldens need ANTHROPIC_API_KEY) |
-| 10 | Auth: Google OAuth PKCE + deep link, magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | todo | |
+| 10 | Auth: magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | done | 2026-07-07 (DB migrate + Google OAuth pending — see notes) |
 | 11 | Settings system: electron-store, live-apply, settings UI shell, shortcut recorder | §19, §5.4 | todo | |
 | 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | todo | |
 | 13 | History: local SQLite + FTS5, home screen UI, undo, restore stack | §5.3, F14/F15 | todo | |
@@ -122,6 +122,16 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 10 — done with pending items (2026-07-07)
+Auth end-to-end (magic-link path), §11:
+- **API** `modules/auth/`: `tokens.ts` — `TokenService` (jose **HS256** 15-min access JWTs; RS256+JWKS deferred until a second consumer exists), refresh/magic/oauth code generators, sha256 (raw tokens never stored); `auth.service.ts` — magic-code create/redeem (10-min TTL, single-use, hash keyed email:code), `upsertUser` (email links providers to one account), `issueTokens` (device create + entitlement-based device limit + rotation family), **refresh rotation with family-reuse revocation** (§11.3: replayed rotated token ⇒ whole family deleted + audit row), logout, `getMe` (profile + entitlements + quota placeholder + devices), `revokeDevice`; `auth.routes.ts` — Fastify routes (magic/token/refresh/logout/users/me/devices/:id DELETE) with zod validation + typed error envelope; **magic codes print to server console until an ESP is wired** (enumeration-safe 204 either way).
+- Prisma: `AuthCode` model added (magic + future oauth exchange codes w/ pkceChallenge column); `@prisma/client`+`jose` deps; **client generation wired into api build/typecheck/test scripts** (root package.json approves prisma postinstalls in onlyBuiltDependencies).
+- WS gateway: `verifyToken` option — `REQUIRE_AUTH=true` closes unauthenticated upgrades with 4001 (dev default stays open).
+- **Desktop** `services/auth.ts` — refresh token **only in main process**, encrypted at rest via `safeStorage` (`userData/auth.bin`, plaintext fallback if encryption unavailable); access token in memory; boot-time restore (refresh→profile, transient network failure does NOT sign out); magic-link IPC (`auth:sendMagicLink`/`submitMagicCode`/`getSession`/`logout` — stubs replaced); `session:changed` broadcasts; dev-shell AccountSection (email→code→signed-in card with plan + sign out).
+- Tests: `tokens.test.ts` (7, always run); `auth.service.test.ts` (5 integration: round trip, single-use codes, **rotation + reuse-revocation**, device limit, revoke-kills-tokens) — **gated on DATABASE_URL, never executed yet**.
+- Verified: turbo 11/11; API boots with routes (health + zod 400 envelope + dev-secret warning confirmed live); desktop smoke exit 0.
+- **PENDING (needs Docker Desktop running — daemon wouldn't start this session):** (1) `docker compose -f infra/docker-compose.dev.yml up -d` (2) `pnpm db:migrate` in apps/api — **first migration never created** (3) `DATABASE_URL=postgresql://flow:flow@localhost:5432/flow pnpm test` to run the 5 auth integration tests (4) manual magic-link E2E (code appears in API console). **Google/Apple OAuth deferred** until client credentials exist (schema + issueTokens ready); JWT_SECRET must be set in prod env.
 
 ### Phase 9 — done (2026-07-07)
 LLM formatting layer (apps/api `modules/ai/`):

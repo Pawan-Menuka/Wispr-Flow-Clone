@@ -165,6 +165,21 @@ model UsageEvent {
   @@index([userId, createdAt])
 }
 
+// One-time auth codes: magic-link 6-digit codes and OAuth deep-link exchange codes (§11.2).
+model AuthCode {
+  id            String    @id @default(uuid())
+  kind          String // 'magic' | 'oauth'
+  codeHash      String    @unique // sha256; raw code never stored
+  email         String? // magic: the address being verified
+  userId        String? // oauth: resolved user awaiting exchange
+  pkceChallenge String? // oauth: S256 challenge from the app
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([email])
+}
+
 // Stripe webhook idempotency ledger (§20).
 model StripeEvent {
   id          String   @id // stripe event id
