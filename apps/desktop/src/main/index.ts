@@ -110,9 +110,8 @@ function bootstrap(): void {
     audio.onVad((speaking) => controller.onVad(speaking));
     audio.onError((message) => controller.onCaptureError(message));
 
-    registerIpcHandlers({ windows, settings, controller, auth });
-
     const hotkeys = new HotkeyService();
+    registerIpcHandlers({ windows, settings, controller, auth, hotkeys });
     if (!hotkeys.setDictateChord(settings.get('hotkey'))) {
       console.warn(`[hotkeys] invalid chord "${settings.get('hotkey')}", falling back to Ctrl+Win`);
       hotkeys.setDictateChord('Ctrl+Win');
@@ -124,7 +123,13 @@ function bootstrap(): void {
       if (patch.hotkey !== undefined && !hotkeys.setDictateChord(patch.hotkey)) {
         console.warn(`[hotkeys] rejected invalid chord "${patch.hotkey}"`);
       }
+      if (patch.launchAtLogin !== undefined) {
+        app.setLoginItemSettings({ openAtLogin: patch.launchAtLogin });
+      }
     });
+    if (!isSmokeTest) {
+      app.setLoginItemSettings({ openAtLogin: settings.get('launchAtLogin') });
+    }
     if (!isSmokeTest) {
       // The global hook stays off in smoke runs; the controller is driven directly.
       hotkeys.start();
@@ -202,6 +207,18 @@ function runSmokeChecks(
     .then(() => (wantMic ? smokeMicCheck(audio) : undefined))
     .then(() => (wantMic ? smokeDictationLoop(windows, controller) : undefined))
     .then(() => (wantInsert ? smokeInsertCheck(windows, insertion, consoleLines) : undefined))
+    .then(async () => {
+      const capturePath = process.env['FLOW_SMOKE_CAPTURE_MAIN'];
+      if (capturePath) {
+        windows.showMainWindow();
+        await new Promise((resolve) => setTimeout(resolve, 1_200));
+        const png = await windows.captureMain();
+        if (png) {
+          const { writeFileSync } = await import('node:fs');
+          writeFileSync(capturePath, png);
+        }
+      }
+    })
     .then(() => {
       clearTimeout(timeout);
       console.log('[smoke] ok: tray-ready, renderers loaded, demo dictation completed');

@@ -1,51 +1,60 @@
-import { useEffect, useRef, useState } from 'react';
-import type { SessionInfo, Settings } from '@flow/shared';
-import { capture, listMicrophones } from '../audio/capture';
+import { useEffect, useState } from 'react';
+import type { SessionInfo } from '@flow/shared';
+import { Button } from '@flow/ui';
+import { SettingsPage } from './SettingsPage';
+import { useSettings, useTheme } from './useSettings';
 
-/**
- * Placeholder shell for the main window. Real routes (onboarding, history,
- * settings) arrive in Phases 3/11/12/13 — this exists to prove the typed
- * bridge round-trips: invoke, settings mutation, and event subscription.
- */
+type Page = 'home' | 'settings';
+
+const IS_SMOKE = new URLSearchParams(location.search).has('smoke');
+
 export function App() {
-  const [version, setVersion] = useState('…');
-  const [settings, setSettings] = useState<Settings | null>(null);
-
-  useEffect(() => {
-    void window.flow.invoke('app:getVersion').then(setVersion);
-    void window.flow.invoke('settings:get').then(setSettings);
-    return window.flow.on('settings:changed', (patch) => {
-      setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
-    });
-  }, []);
-
-  const cycleTheme = () => {
-    if (!settings) return;
-    const order = ['system', 'light', 'dark'] as const;
-    const next = order[(order.indexOf(settings.theme) + 1) % order.length]!;
-    void window.flow.invoke('settings:set', 'theme', next);
-  };
+  const { settings, set } = useSettings();
+  // Smoke runs land on Settings so screenshots cover the phase deliverable.
+  const [page, setPage] = useState<Page>(IS_SMOKE ? 'settings' : 'home');
+  useTheme(settings?.theme);
 
   return (
     <div style={styles.shell}>
-      <h1 style={styles.title}>Flow</h1>
-      <p style={styles.subtitle}>System-wide voice dictation — development shell</p>
-      <dl style={styles.grid}>
-        <dt style={styles.dt}>App version</dt>
-        <dd style={styles.dd}>{version}</dd>
-        <dt style={styles.dt}>Hotkey</dt>
-        <dd style={styles.dd}>{settings?.hotkey ?? '…'}</dd>
-        <dt style={styles.dt}>Theme</dt>
-        <dd style={styles.dd}>
-          {settings?.theme ?? '…'}{' '}
-          <button style={styles.button} onClick={cycleTheme}>
-            cycle
+      <nav style={styles.nav}>
+        <div style={styles.brand}>Flow</div>
+        {(['home', 'settings'] as const).map((target) => (
+          <button
+            key={target}
+            onClick={() => setPage(target)}
+            style={{
+              ...styles.navItem,
+              ...(page === target ? styles.navItemActive : {}),
+            }}
+          >
+            {target === 'home' ? 'Home' : 'Settings'}
           </button>
-        </dd>
-      </dl>
+        ))}
+      </nav>
+      <main style={styles.content}>
+        {page === 'home' ? <HomePage /> : null}
+        {page === 'settings' && settings ? <SettingsPage settings={settings} set={set} /> : null}
+        {IS_SMOKE ? <SmokeInsertTarget /> : null}
+      </main>
+    </div>
+  );
+}
+
+/** Placeholder home — the history timeline lands here in Phase 13. */
+function HomePage() {
+  const [version, setVersion] = useState('…');
+
+  useEffect(() => {
+    void window.flow.invoke('app:getVersion').then(setVersion);
+  }, []);
+
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, margin: 0 }}>Flow</h1>
+      <p style={{ color: 'var(--fg-secondary)', marginTop: 8 }}>
+        Hold <kbd>Ctrl</kbd>+<kbd>Win</kbd> anywhere and speak. v{version}
+      </p>
       <AccountSection />
-      {settings ? <MicSection settings={settings} /> : null}
-      {new URLSearchParams(location.search).has('smoke') ? <SmokeInsertTarget /> : null}
     </div>
   );
 }
@@ -78,31 +87,31 @@ function AccountSection() {
 
   if (session) {
     return (
-      <div style={sectionStyle}>
-        <h2 style={{ fontSize: 16, fontWeight: 600 }}>Account</h2>
-        <p>
-          Signed in as <strong>{session.user.email}</strong> ({session.entitlements.plan})
+      <div style={{ marginTop: 32 }}>
+        <h2 style={styles.h2}>Account</h2>
+        <p style={{ color: 'var(--fg-secondary)' }}>
+          Signed in as <strong style={{ color: 'var(--fg-primary)' }}>{session.user.email}</strong>{' '}
+          ({session.entitlements.plan})
         </p>
-        <button style={styles.button} onClick={() => void window.flow.invoke('auth:logout')}>
+        <Button variant="secondary" size="sm" onClick={() => void window.flow.invoke('auth:logout')}>
           Sign out
-        </button>
+        </Button>
       </div>
     );
   }
 
   return (
-    <div style={sectionStyle}>
-      <h2 style={{ fontSize: 16, fontWeight: 600 }}>Account</h2>
+    <div style={{ marginTop: 32 }}>
+      <h2 style={styles.h2}>Account</h2>
       {stage === 'email' ? (
         <div style={{ display: 'flex', gap: 8 }}>
           <input
-            style={inputStyle}
+            style={styles.input}
             placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
-          <button
-            style={styles.button}
+          <Button
             disabled={busy || !email.includes('@')}
             onClick={() =>
               void run(async () => {
@@ -112,45 +121,34 @@ function AccountSection() {
             }
           >
             Send code
-          </button>
+          </Button>
         </div>
       ) : (
         <div style={{ display: 'flex', gap: 8 }}>
           <input
-            style={inputStyle}
+            style={styles.input}
             placeholder="6-digit code"
             value={code}
             maxLength={6}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
           />
-          <button
-            style={styles.button}
+          <Button
             disabled={busy || code.length !== 6}
-            onClick={() =>
-              void run(() => window.flow.invoke('auth:submitMagicCode', email, code))
-            }
+            onClick={() => void run(() => window.flow.invoke('auth:submitMagicCode', email, code))}
           >
             Sign in
-          </button>
-          <button style={{ ...styles.button, background: 'transparent' }} onClick={() => setStage('email')}>
+          </Button>
+          <Button variant="ghost" onClick={() => setStage('email')}>
             back
-          </button>
+          </Button>
         </div>
       )}
-      {error ? <p style={{ color: '#d64545', fontSize: 13 }}>{error}</p> : null}
+      {error ? (
+        <p style={{ color: 'var(--danger)', fontSize: 'var(--text-sm)' }}>{error}</p>
+      ) : null}
     </div>
   );
 }
-
-const sectionStyle: React.CSSProperties = { marginTop: 40, maxWidth: 420 };
-const inputStyle: React.CSSProperties = {
-  flex: 1,
-  padding: '8px 10px',
-  borderRadius: 6,
-  background: '#1f1f22',
-  color: '#f2f2f3',
-  border: '1px solid rgba(255,255,255,0.2)',
-};
 
 /** Paste target for `--smoke-insert` — rendered only in smoke runs. */
 function SmokeInsertTarget() {
@@ -159,112 +157,50 @@ function SmokeInsertTarget() {
       autoFocus
       placeholder="smoke insert target"
       onChange={(e) => console.warn(`insert-target: ${e.target.value}`)}
-      style={{ marginTop: 24, padding: 8, width: 300, display: 'block' }}
+      style={{ ...styles.input, marginTop: 24, width: 300, display: 'block' }}
     />
-  );
-}
-
-/** Device picker + live meter (BLUEPRINT §2 F2). Becomes Settings → Dictation in Phase 11. */
-function MicSection({ settings }: { settings: Settings }) {
-  const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
-  const [testing, setTesting] = useState(false);
-  const [level, setLevel] = useState(0);
-  const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    void listMicrophones().then(setMics);
-    const onChange = () => void listMicrophones().then(setMics);
-    navigator.mediaDevices.addEventListener('devicechange', onChange);
-    return () => navigator.mediaDevices.removeEventListener('devicechange', onChange);
-  }, []);
-
-  useEffect(() => capture.onLevel(setLevel), []);
-
-  const test = async () => {
-    if (testing) return;
-    setTesting(true);
-    try {
-      await capture.start(settings.micDeviceId);
-      // Labels are only exposed after a permission grant — refresh the list.
-      void listMicrophones().then(setMics);
-      stopTimer.current = setTimeout(() => {
-        void capture.stop().then(() => setTesting(false));
-      }, 3000);
-    } catch {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <div style={{ marginTop: 40, maxWidth: 420 }}>
-      <h2 style={{ fontSize: 16, fontWeight: 600 }}>Microphone</h2>
-      <select
-        value={settings.micDeviceId}
-        onChange={(e) => void window.flow.invoke('settings:set', 'micDeviceId', e.target.value)}
-        style={{
-          width: '100%',
-          padding: '8px 10px',
-          borderRadius: 6,
-          background: '#1f1f22',
-          color: '#f2f2f3',
-          border: '1px solid rgba(255,255,255,0.2)',
-        }}
-      >
-        <option value="default">System default</option>
-        {mics.map((mic) => (
-          <option key={mic.deviceId} value={mic.deviceId}>
-            {mic.label}
-          </option>
-        ))}
-      </select>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
-        <button style={styles.button} onClick={() => void test()} disabled={testing}>
-          {testing ? 'Listening…' : 'Test mic (3 s)'}
-        </button>
-        <div
-          style={{
-            flex: 1,
-            height: 8,
-            borderRadius: 4,
-            background: 'rgba(255,255,255,0.12)',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              width: `${Math.min(100, level * 300)}%`,
-              height: '100%',
-              background: '#8b7cf0',
-              transition: 'width 60ms linear',
-            }}
-          />
-        </div>
-      </div>
-    </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
   shell: {
-    fontFamily: 'system-ui, sans-serif',
-    background: '#161618',
-    color: '#F2F2F3',
+    display: 'flex',
+    fontFamily: 'var(--font-sans)',
+    background: 'var(--bg-app)',
+    color: 'var(--fg-primary)',
     minHeight: '100vh',
-    padding: 48,
-    boxSizing: 'border-box',
   },
-  title: { fontSize: 28, fontWeight: 600, margin: 0 },
-  subtitle: { color: '#A2A2A8', marginTop: 8 },
-  grid: { marginTop: 32, display: 'grid', gridTemplateColumns: '140px 1fr', rowGap: 12 },
-  dt: { color: '#A2A2A8' },
-  dd: { margin: 0 },
-  button: {
-    marginLeft: 8,
-    background: '#8B7CF0',
-    color: '#fff',
+  nav: {
+    width: 180,
+    padding: 'var(--s-6) var(--s-4)',
+    borderRight: '1px solid var(--border)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    flexShrink: 0,
+  },
+  brand: { fontSize: 'var(--text-lg)', fontWeight: 600, marginBottom: 'var(--s-6)', paddingLeft: 10 },
+  navItem: {
+    textAlign: 'left',
+    padding: '8px 10px',
+    borderRadius: 'var(--r-sm)',
     border: 'none',
-    borderRadius: 6,
-    padding: '2px 10px',
+    background: 'transparent',
+    color: 'var(--fg-secondary)',
+    fontFamily: 'var(--font-sans)',
+    fontSize: 'var(--text-base)',
     cursor: 'pointer',
+  },
+  navItemActive: { background: 'var(--bg-sunken)', color: 'var(--fg-primary)', fontWeight: 500 },
+  content: { flex: 1, padding: 'var(--s-10)', overflowY: 'auto' },
+  h2: { fontSize: 'var(--text-lg)', fontWeight: 600 },
+  input: {
+    flex: 1,
+    padding: '8px 10px',
+    borderRadius: 'var(--r-sm)',
+    background: 'var(--bg-surface)',
+    color: 'var(--fg-primary)',
+    border: '1px solid var(--border-strong)',
+    fontFamily: 'var(--font-sans)',
   },
 };
