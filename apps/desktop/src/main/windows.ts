@@ -22,6 +22,8 @@ export class WindowManager {
   private overlayLoaded: Promise<void> | null = null;
   isQuitting = false;
 
+  constructor(private readonly smokeMode = false) {}
+
   async createMainWindow(): Promise<BrowserWindow> {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) return this.mainWindow;
 
@@ -98,10 +100,11 @@ export class WindowManager {
 
   private async loadRenderer(win: BrowserWindow, page: string): Promise<void> {
     const devUrl = process.env['ELECTRON_RENDERER_URL'];
+    const query = this.smokeMode ? { smoke: '1' } : undefined;
     if (devUrl) {
-      await win.loadURL(`${devUrl}/${page}`);
+      await win.loadURL(`${devUrl}/${page}${this.smokeMode ? '?smoke=1' : ''}`);
     } else {
-      await win.loadFile(path.join(RENDERER_DIR, page));
+      await win.loadFile(path.join(RENDERER_DIR, page), query ? { query } : {});
     }
   }
 

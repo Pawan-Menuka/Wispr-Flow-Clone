@@ -9,6 +9,7 @@ import { AudioBridge } from './services/audio-bridge';
 import { DictationController } from './dictation/controller';
 import { HotkeyService } from './hotkeys/hotkey-service';
 import { WsClient } from './services/ws-client';
+import { InsertionService } from './services/insertion';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 
@@ -23,7 +24,7 @@ if (!gotLock) {
 }
 
 function bootstrap(): void {
-  const windows = new WindowManager();
+  const windows = new WindowManager(isSmokeTest);
   let pendingDeepLink: string | null = extractDeepLink(process.argv);
 
   // ---------- Deep links (flowapp://) ----------
@@ -72,6 +73,8 @@ function bootstrap(): void {
     audio.attach(mainWindow.webContents);
     mainWindow.webContents.on('did-finish-load', () => audio.attach(mainWindow.webContents));
 
+    const insertion = new InsertionService();
+
     // Warm backend connection (§9.2) — reconnects with backoff for life.
     const wsClient = new WsClient(API_WS_URL);
     wsClient.connect();
@@ -91,6 +94,11 @@ function bootstrap(): void {
           language: settings.get('language'),
           appContext: { processName: 'unknown', profile: 'default' }, // focus tracker: Phase 16
         }),
+      // Regular smoke must never paste into whatever the user has focused;
+      // --smoke-insert tests real insertion against our own window instead.
+      insertText: isSmokeTest
+        ? async () => true
+        : (text) => insertion.insertText(text).then((r) => r.ok),
     });
     audio.onFrame((frame) => controller.onFrame(frame));
     audio.onVad((speaking) => controller.onVad(speaking));
@@ -126,7 +134,7 @@ function bootstrap(): void {
     }
 
     if (isSmokeTest) {
-      runSmokeChecks(windows, audio, controller);
+      runSmokeChecks(windows, audio, controller, insertion);
     } else {
       // Until onboarding exists (Phase 12), show the main window on launch.
       mainWindow.show();
@@ -161,15 +169,21 @@ function runSmokeChecks(
   windows: WindowManager,
   audio: AudioBridge,
   controller: DictationController,
+  insertion: InsertionService,
 ): void {
   const wantMic = process.argv.includes('--smoke-mic');
+  const wantInsert = process.argv.includes('--smoke-insert');
   const timeout = setTimeout(() => {
     console.error('[smoke] FAIL: timed out');
     app.exit(1);
-  }, 20_000);
+  }, 30_000);
 
   // Surface renderer console lines while smoking (invaluable for audio debug).
-  windows.pipeConsoleTo((line) => console.log(`[renderer] ${line}`));
+  const consoleLines: string[] = [];
+  windows.pipeConsoleTo((line) => {
+    consoleLines.push(line);
+    console.log(`[renderer] ${line}`);
+  });
 
   windows
     .whenMainLoaded()
@@ -181,6 +195,7 @@ function runSmokeChecks(
     })
     .then(() => (wantMic ? smokeMicCheck(audio) : undefined))
     .then(() => (wantMic ? smokeDictationLoop(windows, controller) : undefined))
+    .then(() => (wantInsert ? smokeInsertCheck(windows, insertion, consoleLines) : undefined))
     .then(() => {
       clearTimeout(timeout);
       console.log('[smoke] ok: tray-ready, renderers loaded, demo dictation completed');
@@ -247,6 +262,33 @@ function smokeDictationLoop(
     setTimeout(() => controller.onVad(true), 300);
     setTimeout(() => controller.onChordUp(), 1_500); // held > tap threshold → PTT finish
   });
+}
+
+/**
+ * Insertion check against OUR OWN window (never the user's apps): focuses the
+ * main window's smoke input, runs the real clipboard-swap paste, asserts the
+ * text arrived AND the prior clipboard content was restored.
+ */
+async function smokeInsertCheck(
+  windows: WindowManager,
+  insertion: InsertionService,
+  consoleLines: string[],
+): Promise<void> {
+  const { clipboard } = await import('electron');
+  windows.showMainWindow();
+  await new Promise((resolve) => setTimeout(resolve, 1_500)); // window focus + input autofocus
+
+  const sentinel = `flow-clipboard-sentinel-${Date.now()}`;
+  clipboard.writeText(sentinel);
+  const result = await insertion.insertText('flow insertion works');
+  await new Promise((resolve) => setTimeout(resolve, 600));
+
+  const pasted = consoleLines.some((line) => line.includes('insert-target: flow insertion works'));
+  const restored = clipboard.readText() === sentinel;
+  if (!result.ok || !pasted || !restored) {
+    throw new Error(`insert check failed (ok=${result.ok} pasted=${pasted} restored=${restored})`);
+  }
+  console.log('[smoke] insertion ok (pasted into own window, clipboard restored)');
 }
 
 /** Real-capture assertion: ≥25 frames (0.5 s of audio) within 8 s. */

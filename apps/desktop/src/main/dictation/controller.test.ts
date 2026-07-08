@@ -62,9 +62,13 @@ class FakeStt implements SttSessionHandle {
   }
 }
 
-function makeDeps(mode: 'hold' | 'toggle' = 'hold', connected = true) {
+function makeDeps(
+  mode: 'hold' | 'toggle' = 'hold',
+  opts: { connected?: boolean; insertOk?: boolean } = {},
+) {
+  const { connected = true, insertOk = true } = opts;
   const broadcasts: Broadcast[] = [];
-  const calls = { show: 0, hide: 0, capture: [] as boolean[] };
+  const calls = { show: 0, hide: 0, capture: [] as boolean[], inserted: [] as string[] };
   let stt: FakeStt | null = null;
   const deps: ControllerDeps = {
     broadcast: <K extends EventChannel>(channel: K, payload: FlowEvents[K]) => {
@@ -80,8 +84,19 @@ function makeDeps(mode: 'hold' | 'toggle' = 'hold', connected = true) {
       stt = new FakeStt();
       return stt;
     },
+    insertText: (text) => {
+      calls.inserted.push(text);
+      return Promise.resolve(insertOk);
+    },
   };
   return { deps, broadcasts, calls, getStt: () => stt };
+}
+
+/** Drain microtasks (insertText resolution) under fake timers. */
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 function frame(seq: number, speaking: boolean): AudioFrameMsg {
@@ -98,7 +113,7 @@ describe('DictationController', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('push-to-talk: hold, speak, release → finish sent → server result → confirmed → idle', () => {
+  it('push-to-talk: hold, speak, release → result → inserted → confirmed → idle', async () => {
     const { deps, broadcasts, calls, getStt } = makeDeps('hold');
     const controller = new DictationController(deps);
 
@@ -118,13 +133,37 @@ describe('DictationController', () => {
     expect(controller.currentPhase).toBe('processing');
 
     stt.emitResult('Hello world.');
-    expect(phases(broadcasts)).toEqual(['armed', 'listening', 'processing', 'confirmed']);
+    await flush();
+    expect(phases(broadcasts)).toEqual([
+      'armed',
+      'listening',
+      'processing',
+      'inserting',
+      'confirmed',
+    ]);
+    expect(calls.inserted).toEqual(['Hello world.']);
     const result = broadcasts.find((b) => b.channel === 'dictation:result');
     expect((result?.payload as { text: string }).text).toBe('Hello world.');
 
     vi.advanceTimersByTime(3000);
     expect(controller.currentPhase).toBe('idle');
     expect(calls.hide).toBe(1);
+  });
+
+  it('insertion failure degrades to clipboard message', async () => {
+    const { deps, broadcasts, getStt } = makeDeps('hold', { insertOk: false });
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    controller.onVad(true);
+    controller.onFrame(frame(0, true));
+    vi.advanceTimersByTime(500);
+    controller.onChordUp();
+    getStt()!.emitResult('Hello.');
+    await flush();
+
+    expect(controller.currentPhase).toBe('error');
+    const error = broadcasts.find((b) => b.channel === 'dictation:error');
+    expect((error?.payload as { kind: string }).kind).toBe('insertion-failed');
   });
 
   it('relays interims while listening', () => {
@@ -166,7 +205,7 @@ describe('DictationController', () => {
   });
 
   it('API unreachable → immediate network error', () => {
-    const { deps, broadcasts } = makeDeps('hold', false);
+    const { deps, broadcasts } = makeDeps('hold', { connected: false });
     const controller = new DictationController(deps);
     controller.onChordDown();
     expect(controller.currentPhase).toBe('error');

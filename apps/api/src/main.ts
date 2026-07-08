@@ -6,6 +6,8 @@ import { AppModule } from './app.module.js';
 import { attachDictationGateway } from './modules/dictation/gateway.js';
 import { DeepgramSttProvider } from './modules/ai/deepgram.js';
 import { EchoSttProvider } from './modules/ai/stt.js';
+import { AnthropicLlmProvider } from './modules/ai/llm.js';
+import { FormattingService } from './modules/ai/formatter.js';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
@@ -18,8 +20,16 @@ async function bootstrap(): Promise<void> {
 
   const deepgramKey = process.env['DEEPGRAM_API_KEY'];
   const provider = deepgramKey ? new DeepgramSttProvider(deepgramKey) : new EchoSttProvider();
-  attachDictationGateway(app.getHttpServer(), { provider });
-  console.log(`[api] listening on :${port} — REST /health, WS /v1/stream (STT: ${provider.name})`);
+
+  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  const formatter = new FormattingService(
+    anthropicKey ? new AnthropicLlmProvider(anthropicKey) : null,
+  );
+
+  attachDictationGateway(app.getHttpServer(), { provider, formatter });
+  console.log(
+    `[api] listening on :${port} — REST /health, WS /v1/stream (STT: ${provider.name}, LLM: ${formatter.providerName})`,
+  );
 }
 
 void bootstrap();
