@@ -10,8 +10,10 @@ import { DictationController } from './dictation/controller';
 import { HotkeyService } from './hotkeys/hotkey-service';
 import { WsClient } from './services/ws-client';
 import { InsertionService } from './services/insertion';
+import { AuthService } from './services/auth';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
+const API_HTTP_URL = API_WS_URL.replace(/^ws/, 'http').replace(/\/stream$/, '');
 
 const isSmokeTest = process.argv.includes('--smoke');
 
@@ -75,6 +77,10 @@ function bootstrap(): void {
 
     const insertion = new InsertionService();
 
+    // Auth: restore any persisted session in the background (§11).
+    const auth = new AuthService(API_HTTP_URL, windows);
+    void auth.boot();
+
     // Warm backend connection (§9.2) — reconnects with backoff for life.
     const wsClient = new WsClient(API_WS_URL);
     wsClient.connect();
@@ -104,7 +110,7 @@ function bootstrap(): void {
     audio.onVad((speaking) => controller.onVad(speaking));
     audio.onError((message) => controller.onCaptureError(message));
 
-    registerIpcHandlers({ windows, settings, controller });
+    registerIpcHandlers({ windows, settings, controller, auth });
 
     const hotkeys = new HotkeyService();
     if (!hotkeys.setDictateChord(settings.get('hotkey'))) {

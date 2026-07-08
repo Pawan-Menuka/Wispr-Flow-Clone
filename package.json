@@ -22,7 +22,10 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
-      "esbuild"
+      "esbuild",
+      "prisma",
+      "@prisma/client",
+      "@prisma/engines"
     ]
   }
 }
