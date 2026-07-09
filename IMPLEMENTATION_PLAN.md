@@ -22,7 +22,7 @@
 | 8 | Insertion engine v1: tier-2 clipboard-swap paste + restore + per-app quirks table → first real insertion 🎉 | §14.3, §2 F5/F17 | done | 2026-07-07 |
 | 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | done | 2026-07-07 (live goldens need ANTHROPIC_API_KEY) |
 | 10 | Auth: magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | done | 2026-07-07 (DB migrate + Google OAuth pending — see notes) |
-| 11 | Settings system: electron-store, live-apply, settings UI shell, shortcut recorder | §19, §5.4 | todo | |
+| 11 | Settings system: live-apply, settings UI shell, shortcut recorder, theme | §19, §5.4 | done | 2026-07-08 |
 | 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | todo | |
 | 13 | History: local SQLite + FTS5, home screen UI, undo, restore stack | §5.3, F14/F15 | todo | |
 | 14 | Stabilization: insertion matrix, reconnect/replay, error taxonomy wiring | §3.1 table, §22 | todo | |
@@ -122,6 +122,16 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 11 — done (2026-07-08)
+Settings system + UI shell:
+- **Shortcut recorder, main-process capture** (Win key never reaches renderers): `chords.ts` gained `formatChordFromKeys` (keycode set → canonical "Ctrl+Shift+F9", modifiers ordered, left/right merged, multi-non-modifier rejected, round-trips parseChord; 5 new tests); `HotkeyService.captureNextChord()` — capture mode suspends chord matching, accumulates peak key set, resolves on full release (Esc cancels, 10 s timeout); IPC `shortcut:beginCapture`/`cancelCapture` → `shortcut:captured {chord, conflict}` broadcast (conflict = commandHotkey collision). **Live capture needs a manual keyboard test — uiohook is off in smoke runs.**
+- **packages/ui**: `controls.tsx` — `SettingsRow`/`Switch`(role=switch)/`Select`/`Slider` primitives; `flow-spin` keyframes added to tokens.css (Spinner referenced it undefined).
+- **Renderer restructure** (`app/`): `App.tsx` = left-nav shell (Home | Settings) using tokens; `SettingsPage.tsx` — §5.4 subset: General (launchAtLogin/theme/overlayScale), Dictation (ShortcutRecorder, hotkeyMode, vadSensitivity slider, language, MicSection moved into `MicSection.tsx`), Formatting (fillerRemoval/spokenPunctuation/tone), Privacy (historyRetention/releaseMicImmediately/telemetry); `useSettings.ts` — optimistic `set` + `settings:changed` merge; `useTheme` — resolves `system` via prefers-color-scheme, sets `data-theme`.
+- Live-apply additions in main: `launchAtLogin` → `app.setLoginItemSettings` (applied at boot too, skipped in smoke); hotkey/vad/mic re-apply paths existed since Phases 4–5.
+- Smoke: `FLOW_SMOKE_CAPTURE_MAIN=<path>` screenshots the main window; smoke runs default to the Settings page; SmokeInsertTarget moved to App level (still present for --smoke-insert).
+- Verified: turbo 11/11 (chord tests 12 total); smoke exit 0; **settings screenshot visually confirmed** (dark theme, nav, rows, kbd chips, slider).
+- Note: settings keys not yet surfaced (overlayPosition reset, updateChannel, preferOffline, customInstructions, syncHistory, readAppContext, numberStyle, commandHotkey) arrive with their features.
 
 ### Phase 10 — done with pending items (2026-07-07)
 Auth end-to-end (magic-link path), §11:

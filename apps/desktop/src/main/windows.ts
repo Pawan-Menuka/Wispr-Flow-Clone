@@ -139,6 +139,13 @@ export class WindowManager {
     return image.toPNG();
   }
 
+  /** Debug/smoke helper: PNG snapshot of the main window contents. */
+  async captureMain(): Promise<Buffer | null> {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return null;
+    const image = await this.mainWindow.webContents.capturePage();
+    return image.toPNG();
+  }
+
   isOverlaySender(webContentsId: number): boolean {
     return this.liveId(this.overlayWindow) === webContentsId;
   }
