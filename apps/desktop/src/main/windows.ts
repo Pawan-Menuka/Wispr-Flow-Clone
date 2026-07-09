@@ -100,11 +100,16 @@ export class WindowManager {
 
   private async loadRenderer(win: BrowserWindow, page: string): Promise<void> {
     const devUrl = process.env['ELECTRON_RENDERER_URL'];
-    const query = this.smokeMode ? { smoke: '1' } : undefined;
+    const query: Record<string, string> = {};
+    if (this.smokeMode) query['smoke'] = '1';
+    if (process.env['FLOW_SMOKE_ONBOARDING']) query['onboarding'] = '1';
+    const search = Object.keys(query).length
+      ? `?${new URLSearchParams(query).toString()}`
+      : '';
     if (devUrl) {
-      await win.loadURL(`${devUrl}/${page}${this.smokeMode ? '?smoke=1' : ''}`);
+      await win.loadURL(`${devUrl}/${page}${search}`);
     } else {
-      await win.loadFile(path.join(RENDERER_DIR, page), query ? { query } : {});
+      await win.loadFile(path.join(RENDERER_DIR, page), search ? { query } : {});
     }
   }
 

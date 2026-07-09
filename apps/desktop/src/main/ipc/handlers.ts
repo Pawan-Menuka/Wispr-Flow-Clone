@@ -19,7 +19,11 @@ interface IpcContext {
 }
 
 /** Domains the renderer may ask the OS browser to open (BLUEPRINT §15). */
-const EXTERNAL_URL_ALLOWLIST = ['https://github.com/', 'https://flow.app/'];
+const EXTERNAL_URL_ALLOWLIST = [
+  'https://github.com/',
+  'https://flow.app/',
+  'ms-settings:privacy-microphone', // onboarding mic-permission recovery (§3.2)
+];
 
 /**
  * Typed IPC registration (BLUEPRINT §7.3). Every handler:

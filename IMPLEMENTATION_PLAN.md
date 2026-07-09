@@ -23,7 +23,7 @@
 | 9 | LLM formatting: Claude Haiku provider, prompt v1, degrade-to-raw path, golden fixture set | §12.2, §12.5 | done | 2026-07-07 (live goldens need ANTHROPIC_API_KEY) |
 | 10 | Auth: magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | done | 2026-07-07 (DB migrate + Google OAuth pending — see notes) |
 | 11 | Settings system: live-apply, settings UI shell, shortcut recorder, theme | §19, §5.4 | done | 2026-07-08 |
-| 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | todo | |
+| 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | done | 2026-07-08 |
 | 13 | History: local SQLite + FTS5, home screen UI, undo, restore stack | §5.3, F14/F15 | todo | |
 | 14 | Stabilization: insertion matrix, reconnect/replay, error taxonomy wiring | §3.1 table, §22 | todo | |
 | 15 | Dictionary + language switching + STT keyword boosting | F10, F16 | todo | |
@@ -122,6 +122,15 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 12 — done (2026-07-08)
+First-run onboarding (§3.2):
+- Shared: `onboardingComplete` local setting (default false) gates the flow; App renders `Onboarding` until set (skipped in smoke unless `FLOW_SMOKE_ONBOARDING=1` forces it via `?onboarding=1`).
+- `app/Onboarding.tsx` — 6 steps with progress dots: **Welcome** → **Sign in** (magic-link, reuses auth IPC; "Skip for now" allowed while REQUIRE_AUTH=false — flip to mandatory with auth enforcement) → **Mic permission** (privacy copy first, then real `capture.start`; denied → recovery panel with `ms-settings:privacy-microphone` deep link [added to openExternal allowlist] + Check again) → **Hotkey tutorial** (inline ShortcutRecorder rebind) → **Practice** (focused textarea; success = `dictation:result` event AND non-empty box; skippable) → **Done** → sets flag + `window.close()` (close-to-tray).
+- **Tooling fix**: recurring `@flow/api` build/typecheck/test flake was three parallel `prisma generate` calls colliding on Windows file locks — generate is now a `db:generate` turbo task that build/typecheck/test `dependsOn` (removed from the api scripts); verified two consecutive clean runs.
+- UI fix: progress dots were inline spans (width/height ignored) — dots container is flex now.
+- Verified: turbo 12/12 ×2; smoke exit 0; onboarding Welcome screen **visually confirmed** (title, copy, CTA, dots).
+- Deferred: macOS accessibility-permission step (§3.2 step 4) with mac parity; analytics `activation:first_insertion` event with Phase 20 telemetry; mic "Check again" 2 s auto-poll (manual button only).
 
 ### Phase 11 — done (2026-07-08)
 Settings system + UI shell:
