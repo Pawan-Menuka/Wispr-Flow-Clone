@@ -88,3 +88,11 @@ export type UpdateStatus =
   | { state: 'error'; message: string };
 
 export type SyncStatus = 'synced' | 'pending' | 'offline';
+
+/** Personal-dictionary entry, local-first (synced in Phase 17). */
+export interface DictionaryTerm {
+  phrase: string;
+  /** Optional context hint shown in the UI (not sent to providers). */
+  hint?: string;
+  addedAt: string;
+}

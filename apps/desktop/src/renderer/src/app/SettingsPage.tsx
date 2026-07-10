@@ -1,5 +1,6 @@
-import type { Settings } from '@flow/shared';
-import { Select, SettingsRow, Slider, Switch } from '@flow/ui';
+import { useEffect, useState } from 'react';
+import type { DictionaryTerm, Settings } from '@flow/shared';
+import { Button, Select, SettingsRow, Slider, Switch } from '@flow/ui';
 import { ShortcutRecorder } from './ShortcutRecorder';
 import { MicSection } from './MicSection';
 
@@ -101,6 +102,14 @@ export function SettingsPage({
         </SettingsRow>
       </Section>
 
+      <Section title="Dictionary">
+        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--fg-secondary)', marginBottom: 12 }}>
+          Names and jargon Flow should always spell correctly — boosted in recognition and
+          formatting.
+        </p>
+        <DictionarySection />
+      </Section>
+
       <Section title="Privacy">
         <SettingsRow label="History retention" description="Dictations are stored on this device only">
           <Select
@@ -122,6 +131,90 @@ export function SettingsPage({
           <Switch checked={settings.telemetry} onChange={(v) => set('telemetry', v)} />
         </SettingsRow>
       </Section>
+    </div>
+  );
+}
+
+function DictionarySection() {
+  const [terms, setTerms] = useState<DictionaryTerm[]>([]);
+  const [draft, setDraft] = useState('');
+
+  const reload = () => void window.flow.invoke('dictionary:list').then(setTerms);
+  useEffect(reload, []);
+
+  const add = async () => {
+    const phrase = draft.trim();
+    if (!phrase) return;
+    setDraft('');
+    await window.flow.invoke('dictionary:add', phrase);
+    reload();
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input
+          style={{
+            flex: 1,
+            padding: '8px 10px',
+            borderRadius: 'var(--r-sm)',
+            background: 'var(--bg-surface)',
+            color: 'var(--fg-primary)',
+            border: '1px solid var(--border-strong)',
+            fontFamily: 'var(--font-sans)',
+          }}
+          placeholder="Add a word or phrase…"
+          value={draft}
+          maxLength={80}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && void add()}
+        />
+        <Button size="sm" disabled={!draft.trim()} onClick={() => void add()}>
+          Add
+        </Button>
+      </div>
+      {terms.length === 0 ? (
+        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--fg-tertiary)' }}>
+          No entries yet — try your name or a product term.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {terms.map((term) => (
+            <span
+              key={term.phrase}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 10px',
+                borderRadius: 'var(--r-pill)',
+                background: 'var(--bg-sunken)',
+                border: '1px solid var(--border)',
+                fontSize: 'var(--text-sm)',
+              }}
+            >
+              {term.phrase}
+              <button
+                aria-label={`Remove ${term.phrase}`}
+                onClick={() =>
+                  void window.flow.invoke('dictionary:remove', term.phrase).then(reload)
+                }
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--fg-tertiary)',
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontSize: 14,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

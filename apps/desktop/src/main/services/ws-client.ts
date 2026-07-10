@@ -45,6 +45,7 @@ interface SessionOptions {
   sessionId: string;
   language?: string;
   appContext: AppContext;
+  dictionary?: string[];
 }
 
 export class WsClient {
@@ -180,6 +181,7 @@ class SessionImpl implements SttSessionHandle {
         : {}),
       appContext: this.opts.appContext,
       mode: 'dictate',
+      ...(this.opts.dictionary?.length ? { dictionary: this.opts.dictionary } : {}),
     });
   }
 
