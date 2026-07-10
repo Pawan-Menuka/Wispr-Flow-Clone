@@ -22,6 +22,7 @@ export class AuthService {
   private session: SessionInfo | null = null;
   private stored: StoredAuth | null = null;
   private readonly storePath: string;
+  private sessionListeners = new Set<(session: SessionInfo | null) => void>();
 
   constructor(
     private readonly apiBaseUrl: string, // e.g. http://127.0.0.1:8787/v1
@@ -36,6 +37,22 @@ export class AuthService {
 
   getAccessToken(): string | null {
     return this.accessToken;
+  }
+
+  /** Main-process subscribers (renderers use the session:changed event). */
+  onSession(listener: (session: SessionInfo | null) => void): () => void {
+    this.sessionListeners.add(listener);
+    return () => this.sessionListeners.delete(listener);
+  }
+
+  /** Force a token refresh (e.g. after a 401 mid-flight). */
+  async refreshNow(): Promise<boolean> {
+    try {
+      await this.refresh();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Restore a persisted session at boot (refresh → profile). Never throws. */
@@ -90,6 +107,7 @@ export class AuthService {
     this.stored = null;
     fs.rmSync(this.storePath, { force: true });
     this.windows.broadcast('session:changed', null);
+    for (const listener of this.sessionListeners) listener(null);
   }
 
   private async refresh(): Promise<void> {
@@ -129,6 +147,7 @@ export class AuthService {
     };
     this.session.device.current = true;
     this.windows.broadcast('session:changed', this.session);
+    for (const listener of this.sessionListeners) listener(this.session);
   }
 
   // ---------- HTTP ----------

@@ -28,7 +28,7 @@
 | 14 | Stabilization: reconnect/replay, error-path restore stack, insertion-matrix doc | §3.1 table, §22 | done | 2026-07-10 (manual matrix pass + Silero VAD still pending — need API keys/dogfooding) |
 | 15 | Dictionary + language switching + STT keyword boosting | F10, F16 | done | 2026-07-10 |
 | 16 | App awareness (focus via koffi, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | done | 2026-07-10 |
-| 17 | Sync (settings doc, outbox, conflict merge) | §19.4, F22 | todo | |
+| 17 | Sync (settings doc, conflict merge) | §19.4, F22 | done | 2026-07-10 (DB integration tests + live E2E pending Docker; history/dictionary sync deferred) |
 | 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | todo | |
 | 19 | Distribution: electron-builder, signing, auto-update, channels | §14.4, §26 | todo | |
 | 20 | Observability + hardening + launch checklist sweep | §15, §21–§25, §30 | todo | |
@@ -122,6 +122,15 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 17 — done with pending items (2026-07-10)
+Settings sync (§19.4):
+- **shared `sync.ts`**: `SyncedDoc {version, values, stamps}` + `SyncPutSchema` (zod, junk keys rejected via `SyncedSettingsSchema.partial()`); **`mergeSyncedDocs`** — per-key newest-ISO-stamp-wins merge returning `{values, stamps, applyLocally}`; missing stamps lose; equal values skip applyLocally; object values (appRules) merge whole-value. **6 unit tests.**
+- **API `modules/sync/sync.routes.ts`**: GET/PUT `/v1/sync/settings` (Bearer-guarded) on `User.settingsJson`; server is deliberately dumb — stores doc opaquely, bumps version, stale `baseVersion` → **409 + current doc** (client merges). Malformed stored docs read as v0-empty.
+- **Desktop `services/sync.ts`**: `SyncService` — stamps synced-key changes (sync-meta.json: stamps + lastVersion, atomic), 2 s debounced PUT, 409 → merge → single retry, 401 → `auth.refreshNow()` (new) → retry, network → status `offline` + 30 s retry; boot/sign-in `pull()` merges and pushes local-newer keys; remote-won keys applied via `applyingRemote` guard (no echo loop); `sync:status` broadcasts wired. Dormant signed-out; `AuthService.onSession()` hook added for main-process subscribers.
+- Gotcha: adding an explicit `fastify` dep created a duplicate-typed copy vs @nestjs/platform-fastify's — **import fastify transitively only** (hoisted linker makes it resolvable).
+- Verified: turbo 12/12 (6 merge tests always run), smoke exit 0. **Pending Docker/DB:** 4-test `sync.routes.test.ts` (fastify.inject integration: 401/v0-doc/version-bump+409+rebase/junk-keys) never executed; live two-device E2E untested.
+- Deferred: history + dictionary sync (outbox pattern) — settings-doc sync was the F22 core; `sync.changed` WS push also pending (server currently has no per-user connection registry).
 
 ### Phase 16 — done (2026-07-10)
 App awareness + §12.6 parallelism:

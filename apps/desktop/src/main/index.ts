@@ -11,6 +11,7 @@ import { HotkeyService } from './hotkeys/hotkey-service';
 import { WsClient } from './services/ws-client';
 import { InsertionService } from './services/insertion';
 import { AuthService } from './services/auth';
+import { SyncService } from './services/sync';
 import { HistoryService } from './services/history';
 import { DictionaryService } from './services/dictionary';
 import { getFocusedApp } from './services/focus';
@@ -87,6 +88,10 @@ function bootstrap(): void {
 
     // Auth: restore any persisted session in the background (§11).
     const auth = new AuthService(API_HTTP_URL, windows);
+
+    // Settings sync (§19.4) — dormant until a session exists.
+    const sync = new SyncService(API_HTTP_URL, auth, settings, windows, app.getPath('userData'));
+    sync.start();
     void auth.boot();
 
     // Warm backend connection (§9.2) — reconnects with backoff for life.
