@@ -29,7 +29,17 @@ async function bootstrap(): Promise<void> {
   registerAuthRoutes(app.getHttpAdapter().getInstance(), auth);
 
   const port = Number(process.env['PORT'] ?? 8787);
-  await app.listen(port, '0.0.0.0');
+  try {
+    await app.listen(port, '0.0.0.0');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      console.error(
+        `[api] port ${port} is already in use — is another Flow API running? (set PORT to override)`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  }
 
   const deepgramKey = process.env['DEEPGRAM_API_KEY'];
   const provider = deepgramKey ? new DeepgramSttProvider(deepgramKey) : new EchoSttProvider();

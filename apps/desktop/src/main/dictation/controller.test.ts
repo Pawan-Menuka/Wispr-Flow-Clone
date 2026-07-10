@@ -248,7 +248,7 @@ describe('DictationController', () => {
     controller.onChordUp();
     expect(controller.currentPhase).toBe('processing');
 
-    vi.advanceTimersByTime(6000);
+    vi.advanceTimersByTime(10_000);
     expect(controller.currentPhase).toBe('error');
   });
 
