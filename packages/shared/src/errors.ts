@@ -12,6 +12,7 @@ export const ERROR_KINDS = [
   'insertion-failed', // all three insertion tiers failed
   'quota-exceeded', // hard block past the grace threshold
   'secure-field', // focused element is a password/secure input
+  'app-disabled', // user turned dictation off for the focused app (§5.4 profile: off)
   'unauthorized', // session invalid/revoked
   'cancelled', // user pressed Esc / session.cancel
   'offline-unavailable', // offline mode requested but no local model installed

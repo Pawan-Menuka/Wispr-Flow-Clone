@@ -35,6 +35,10 @@ export const SyncedSettingsSchema = z.object({
   numberStyle: z.enum(['auto', 'digits', 'words']).default('auto'),
   /** Pro feature — appended to the formatting prompt. */
   customInstructions: z.string().max(1000).default(''),
+  /** Per-app style profiles keyed by lowercase process name (F11). */
+  appRules: z
+    .record(z.string(), z.enum(['default', 'slack', 'email', 'code', 'terminal', 'off']))
+    .default({}),
   historyRetention: z.enum(['forever', '30d', 'off']).default('forever'),
   syncHistory: z.boolean().default(false),
   readAppContext: z.boolean().default(false),

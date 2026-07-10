@@ -13,6 +13,8 @@ import { InsertionService } from './services/insertion';
 import { AuthService } from './services/auth';
 import { HistoryService } from './services/history';
 import { DictionaryService } from './services/dictionary';
+import { getFocusedApp } from './services/focus';
+import { resolveProfile } from './services/profiles';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 const API_HTTP_URL = API_WS_URL.replace(/^ws/, 'http').replace(/\/stream$/, '');
@@ -100,20 +102,36 @@ function bootstrap(): void {
       requestCapture: (active) => audio.requestCapture(active),
       takePreRoll: () => audio.takePreRoll(),
       getHotkeyMode: () => settings.get('hotkeyMode'),
-      startSttSession: (sessionId) =>
+      getFocusedApp: () => {
+        const focused = getFocusedApp();
+        if (!focused) return null;
+        return {
+          processName: focused.processName,
+          profile: resolveProfile(focused.processName, settings.get('appRules')),
+        };
+      },
+      startSttSession: (sessionId, focusedApp) =>
         wsClient.startSession({
           sessionId,
           language: settings.get('language'),
-          appContext: { processName: 'unknown', profile: 'default' }, // focus tracker: Phase 16
+          appContext: {
+            processName: focusedApp?.processName ?? 'unknown',
+            profile: (focusedApp?.profile ?? 'default') as
+              | 'default'
+              | 'slack'
+              | 'email'
+              | 'code'
+              | 'terminal',
+          },
           dictionary: dictionary.forSession(),
         }),
       // Regular smoke must never paste into whatever the user has focused;
       // --smoke-insert tests real insertion against our own window instead.
       insertText: isSmokeTest
         ? async () => true
-        : (text) => insertion.insertText(text).then((r) => r.ok),
+        : (text, processName) => insertion.insertText(text, processName ?? 'unknown').then((r) => r.ok),
       addHistory: (entry) =>
-        history.add({ ...entry, appName: null, language: settings.get('language'), createdAt: new Date().toISOString() }),
+        history.add({ ...entry, language: settings.get('language'), createdAt: new Date().toISOString() }),
     });
     audio.onFrame((frame) => controller.onFrame(frame));
     audio.onVad((speaking) => controller.onVad(speaking));
@@ -206,6 +224,9 @@ function runSmokeChecks(
     console.error('[smoke] FAIL: timed out');
     app.exit(1);
   }, 30_000);
+
+  // Live probe of the koffi focus tracker (§14.2).
+  console.log(`[smoke] focused app: ${JSON.stringify(getFocusedApp())}`);
 
   // Surface renderer console lines while smoking (invaluable for audio debug).
   const consoleLines: string[] = [];

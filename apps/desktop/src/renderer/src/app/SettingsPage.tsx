@@ -102,6 +102,14 @@ export function SettingsPage({
         </SettingsRow>
       </Section>
 
+      <Section title="Per-app profiles">
+        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--fg-secondary)', marginBottom: 12 }}>
+          Adjust the writing style per application, or turn dictation off entirely. Slack, email,
+          code editors and terminals are detected automatically.
+        </p>
+        <AppRulesSection settings={settings} set={set} />
+      </Section>
+
       <Section title="Dictionary">
         <p style={{ fontSize: 'var(--text-sm)', color: 'var(--fg-secondary)', marginBottom: 12 }}>
           Names and jargon Flow should always spell correctly — boosted in recognition and
@@ -131,6 +139,97 @@ export function SettingsPage({
           <Switch checked={settings.telemetry} onChange={(v) => set('telemetry', v)} />
         </SettingsRow>
       </Section>
+    </div>
+  );
+}
+
+const PROFILE_OPTIONS: [Settings['appRules'][string], string][] = [
+  ['default', 'Default'],
+  ['slack', 'Chat (casual)'],
+  ['email', 'Email'],
+  ['code', 'Code'],
+  ['terminal', 'Terminal'],
+  ['off', 'Dictation off'],
+];
+
+function AppRulesSection({
+  settings,
+  set,
+}: {
+  settings: Settings;
+  set: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const rules = settings.appRules;
+
+  const upsert = (name: string, profile: Settings['appRules'][string]) => {
+    set('appRules', { ...rules, [name.toLowerCase().trim()]: profile });
+  };
+  const remove = (name: string) => {
+    const next = { ...rules };
+    delete next[name];
+    set('appRules', next);
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input
+          style={{
+            flex: 1,
+            padding: '8px 10px',
+            borderRadius: 'var(--r-sm)',
+            background: 'var(--bg-surface)',
+            color: 'var(--fg-primary)',
+            border: '1px solid var(--border-strong)',
+            fontFamily: 'var(--font-sans)',
+          }}
+          placeholder="Process name, e.g. notion.exe"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && draft.trim()) {
+              upsert(draft, 'default');
+              setDraft('');
+            }
+          }}
+        />
+        <Button
+          size="sm"
+          disabled={!draft.trim()}
+          onClick={() => {
+            upsert(draft, 'default');
+            setDraft('');
+          }}
+        >
+          Add rule
+        </Button>
+      </div>
+      {Object.keys(rules).length === 0 ? (
+        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--fg-tertiary)' }}>
+          No custom rules — built-in detection applies.
+        </p>
+      ) : (
+        Object.entries(rules).map(([name, profile]) => (
+          <SettingsRow key={name} label={name}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Select
+                value={profile}
+                onChange={(e) => upsert(name, e.target.value as Settings['appRules'][string])}
+              >
+                {PROFILE_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              <Button size="sm" variant="ghost" onClick={() => remove(name)}>
+                Remove
+              </Button>
+            </div>
+          </SettingsRow>
+        ))
+      )}
     </div>
   );
 }
