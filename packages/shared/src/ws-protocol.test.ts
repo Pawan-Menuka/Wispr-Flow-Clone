@@ -31,11 +31,11 @@ describe('ws message parsing', () => {
         t: 'session.start',
         sessionId: SESSION_ID,
         appContext: { processName: 'x' },
-        dictionary: ['Kubernetes', 'Mihijith'],
+        dictionary: ['Kubernetes', 'Pawan'],
       }),
     );
     if (msg?.t === 'session.start') {
-      expect(msg.dictionary).toEqual(['Kubernetes', 'Mihijith']);
+      expect(msg.dictionary).toEqual(['Kubernetes', 'Pawan']);
     } else {
       expect.unreachable();
     }

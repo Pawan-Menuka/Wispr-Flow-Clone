@@ -186,7 +186,7 @@ Legend — **Difficulty:** 1 (trivial) → 5 (hard R&D). **Priority:** P0 = MVP-
 ### F9 — Settings → see §19. **Difficulty 2 · P0 · 3 days.**
 
 ### F10 — Personal Dictionary
-- **Purpose:** Proper nouns, jargon, names ("Kubernetes", "Mihijith") transcribed correctly.
+- **Purpose:** Proper nouns, jargon, names ("Kubernetes", "Pawan") transcribed correctly.
 - **Logic:** User-managed word list + auto-suggested entries (words the user corrected repeatedly). Injected two ways: STT keyword boosting (Deepgram `keywords`) + LLM prompt ("spell these exactly: …"). Synced.
 - **Edge cases:** Huge dictionaries (cap prompt injection at ~200 highest-frequency terms); multi-word phrases; per-language entries.
 - **Difficulty 2 · P1 · 2 days.**
@@ -692,7 +692,7 @@ model Device {
   id           String   @id @default(uuid())
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name         String                    // "Mihijith's MacBook Pro"
+  name         String                    // "Pawan's MacBook Pro"
   platform     String                    // win32 | darwin | linux
   appVersion   String
   lastSeenAt   DateTime @updatedAt

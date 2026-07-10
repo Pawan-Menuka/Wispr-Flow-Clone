@@ -130,7 +130,7 @@ Personal dictionary + language switching:
 - Desktop: `services/dictionary.ts` — `DictionaryService` (dictionary.json, atomic writes, 500-entry cap, case-insensitive dedupe/remove, 80-char limit, newest-first, `forSession()` top-50; **6 unit tests**); IPC `dictionary:list/add/remove` (new shared channels + `DictionaryTerm` type); wired into `startSttSession`.
 - Settings UI: Dictionary section — add input (Enter or button), chip list with × remove, empty-state hint.
 - Language switching: tray **Language ▸** radio submenu (8 langs + auto; menu rebuilds on settings change, stays in sync with the Settings select). Spoken language → Deepgram param was already live; spoken "switch to Spanish" command deferred to command mode (Phase 2 roadmap).
-- Verified: turbo 12/12 (shared protocol test for dictionary bounds; 6 dictionary tests), smoke exit 0. **Real-audio boost quality untested until Deepgram key lands** (add "Mihijith" and dictate it — the acceptance test).
+- Verified: turbo 12/12 (shared protocol test for dictionary bounds; 6 dictionary tests), smoke exit 0. **Real-audio boost quality untested until Deepgram key lands** (add "Pawan" and dictate it — the acceptance test).
 
 ### Phase 14 — done (2026-07-10)
 Stabilization sprint (autonomously-verifiable subset):

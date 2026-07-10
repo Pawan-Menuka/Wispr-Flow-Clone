@@ -14,10 +14,10 @@ describe('DictionaryService', () => {
   it('adds, persists, and reloads terms newest-first', () => {
     const service = new DictionaryService(dir);
     service.add('Kubernetes');
-    service.add('Mihijith', 'user name');
+    service.add('Pawan', 'user name');
 
     const reloaded = new DictionaryService(dir);
-    expect(reloaded.list().map((t) => t.phrase)).toEqual(['Mihijith', 'Kubernetes']);
+    expect(reloaded.list().map((t) => t.phrase)).toEqual(['Pawan', 'Kubernetes']);
     expect(reloaded.list()[0]!.hint).toBe('user name');
   });
 
