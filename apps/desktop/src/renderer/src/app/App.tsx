@@ -2,17 +2,24 @@ import { useEffect, useState } from 'react';
 import type { SessionInfo } from '@flow/shared';
 import { Button } from '@flow/ui';
 import { SettingsPage } from './SettingsPage';
+import { Onboarding } from './Onboarding';
 import { useSettings, useTheme } from './useSettings';
 
 type Page = 'home' | 'settings';
 
-const IS_SMOKE = new URLSearchParams(location.search).has('smoke');
+const QUERY = new URLSearchParams(location.search);
+const IS_SMOKE = QUERY.has('smoke');
+const FORCE_ONBOARDING = QUERY.has('onboarding');
 
 export function App() {
   const { settings, set } = useSettings();
   // Smoke runs land on Settings so screenshots cover the phase deliverable.
   const [page, setPage] = useState<Page>(IS_SMOKE ? 'settings' : 'home');
   useTheme(settings?.theme);
+
+  if (settings && (FORCE_ONBOARDING || (!settings.onboardingComplete && !IS_SMOKE))) {
+    return <Onboarding settings={settings} set={set} />;
+  }
 
   return (
     <div style={styles.shell}>
