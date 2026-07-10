@@ -27,7 +27,7 @@
 | 13 | History: local store + search, home screen UI, undo, restore stack | §5.3, F14/F15 | done | 2026-07-10 (JSONL store; SQLite/FTS5 deferred) |
 | 14 | Stabilization: reconnect/replay, error-path restore stack, insertion-matrix doc | §3.1 table, §22 | done | 2026-07-10 (manual matrix pass + Silero VAD still pending — need API keys/dogfooding) |
 | 15 | Dictionary + language switching + STT keyword boosting | F10, F16 | done | 2026-07-10 |
-| 16 | App awareness (focus.node probes, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | todo | |
+| 16 | App awareness (focus via koffi, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | done | 2026-07-10 |
 | 17 | Sync (settings doc, outbox, conflict merge) | §19.4, F22 | todo | |
 | 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | todo | |
 | 19 | Distribution: electron-builder, signing, auto-update, channels | §14.4, §26 | todo | |
@@ -122,6 +122,16 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 16 — done (2026-07-10)
+App awareness + §12.6 parallelism:
+- **Focus tracking without custom C++**: `services/focus.ts` uses **koffi FFI** (prebuilt N-API) → `GetForegroundWindow`/`GetWindowThreadProcessId`/`QueryFullProcessImageNameW`; returns lowercase process name only (window titles never read, §15); lazy-loads so a koffi failure can't break boot; non-Windows → null. **Live-verified in smoke: detected `chrome.exe`.** macOS + UIA writable/secure-field probes still deferred to a native pass.
+- `services/profiles.ts` — pure `resolveProfile(processName, userRules)`: user rules (new synced setting `appRules: record<name, default|slack|email|code|terminal|off>`) beat built-in regex table (slack/discord/teams→slack; outlook/thunderbird→email; code/devenv/jetbrains→code; terminals→terminal); substring-safe. 4 tests.
+- Controller: focus snapshot at chord-down (§3.1 step 2) stored for the session; **profile `off` refuses before the mic starts** (new `app-disabled` ErrorKind); processName now flows to → `session.start.appContext` (server style profile), → `insertText` (per-app quirks table live at last), → history `appName`, → `dictation:result`. 2 new controller tests.
+- Settings UI: "Per-app profiles" section — add rule by process name, per-rule profile select (incl. "Dictation off"), remove.
+- **§12.6 parallel-LLM trick (server)**: `SttStream.textSoFar()` added (Deepgram = joined finals; echo = running text); `finishSession` fires the LLM on finalized-so-far text *while* the STT tail flushes, reuses the in-flight result when `rawText === provisional` else re-formats (double-LLM cost only when the tail changed — per spec). Gateway test upgraded with a counting LLM fake: **asserts exactly 1 LLM call** on the provisional path; happy-path test now exercises the formatted pipeline (`formatted: true`).
+- Verified: turbo 12/12 (new: 4 profile + 2 controller tests, upgraded gateway test), smoke exit 0 with live focus probe.
+- Real-world latency win of the parallel path is measurable only with real keys — dogfooding item.
 
 ### Phase 15 — done (2026-07-10)
 Personal dictionary + language switching:

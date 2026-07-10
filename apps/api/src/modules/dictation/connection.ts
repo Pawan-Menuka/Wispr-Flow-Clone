@@ -134,12 +134,26 @@ export class ClientConnection {
     }
     session.finishRequestedAt = Date.now();
     try {
-      const rawText = await session.stream.finish();
-      const { text: finalText, formatted } = await this.formatter.format(rawText, {
+      const formatCtx = {
         language: session.language,
         appProfile: session.profile,
         ...(session.dictionary.length ? { dictionary: session.dictionary } : {}),
-      });
+      };
+
+      // §12.6 parallelism: most audio is already transcribed by finish-time.
+      // Fire the LLM on the finalized-so-far text WHILE the STT tail flushes;
+      // if the tail didn't change anything, the answer is already in flight.
+      const provisionalText = session.stream.textSoFar().trim();
+      const provisional =
+        provisionalText.split(/\s+/).length >= 4
+          ? { text: provisionalText, promise: this.formatter.format(provisionalText, formatCtx) }
+          : null;
+
+      const rawText = await session.stream.finish();
+      const { text: finalText, formatted } =
+        provisional && rawText.trim() === provisional.text
+          ? await provisional.promise
+          : await this.formatter.format(rawText, formatCtx);
       const durationMs = session.frames * 20;
       this.send({
         t: 'session.result',

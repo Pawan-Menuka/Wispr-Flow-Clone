@@ -35,14 +35,19 @@ export interface ControllerDeps {
   requestCapture(active: boolean): void;
   takePreRoll(): AudioFrameMsg[];
   getHotkeyMode(): 'hold' | 'toggle';
+  /** Focus snapshot at chord-down (§3.1 step 2). Null = unknown/non-Windows. */
+  getFocusedApp(): { processName: string; profile: string } | null;
   /** Opens a backend dictation session; null when the API is unreachable. */
-  startSttSession(sessionId: string): SttSessionHandle | null;
-  /** Tier-2 insertion (§14.3). Resolves false when it degraded to clipboard. */
-  insertText(text: string): Promise<boolean>;
+  startSttSession(sessionId: string, app: { processName: string; profile: string } | null):
+    | SttSessionHandle
+    | null;
+  /** Tier-2 insertion (§14.3); processName drives the quirks table. */
+  insertText(text: string, processName: string | null): Promise<boolean>;
   /** Persist a finished dictation to local history (Phase 13). */
   addHistory(entry: {
     id: string;
     finalText: string;
+    appName: string | null;
     wordCount: number;
     durationMs: number;
   }): void;
@@ -68,6 +73,7 @@ export class DictationController {
   private phase: DictationPhase = 'idle';
   private sessionId: string | null = null;
   private stt: SttSessionHandle | null = null;
+  private focusedApp: { processName: string; profile: string } | null = null;
   private latched = false; // true once the session runs in toggle mode
   private chordDownAt = 0;
   private sawSpeech = false;
@@ -151,7 +157,19 @@ export class DictationController {
   private begin(): void {
     this.clearTimers();
     const id = randomUUID();
-    const stt = this.deps.startSttSession(id);
+
+    // Focus snapshot BEFORE anything else (§3.1 step 2) — the insertion
+    // target is whatever had focus when the chord went down.
+    this.focusedApp = this.deps.getFocusedApp();
+    if (this.focusedApp?.profile === 'off') {
+      this.sessionId = id;
+      this.setPhase('armed');
+      this.deps.showOverlay();
+      this.fail('app-disabled', 'Dictation is turned off for this app');
+      return;
+    }
+
+    const stt = this.deps.startSttSession(id, this.focusedApp);
     if (!stt) {
       this.sessionId = id;
       this.setPhase('armed'); // brief flash so the error has a visible home
@@ -227,15 +245,17 @@ export class DictationController {
     lastResult.id = id;
     lastResult.text = text;
     pushRestoreStack(id, text);
+    const appName = this.focusedApp?.processName ?? null;
     if (text.trim()) {
       this.deps.addHistory({
         id,
         finalText: text,
+        appName,
         wordCount: text.trim().split(/\s+/).length,
         durationMs: this.frameCount * 20,
       });
     }
-    this.deps.broadcast('dictation:result', { id, text, appName: null });
+    this.deps.broadcast('dictation:result', { id, text, appName });
 
     if (!text.trim()) {
       this.confirm();
@@ -244,7 +264,7 @@ export class DictationController {
 
     this.setPhase('inserting');
     void this.deps
-      .insertText(text)
+      .insertText(text, this.focusedApp?.processName ?? null)
       .then((ok) => {
         if (this.sessionId !== id) return; // cancelled/superseded meanwhile
         if (ok) this.confirm();
