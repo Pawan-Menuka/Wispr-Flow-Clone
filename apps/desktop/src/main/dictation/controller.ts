@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DictationPhase, ErrorKind, EventChannel, FlowEvents } from '@flow/shared';
 import type { AudioFrameMsg } from '../services/audio-bridge';
 import type { SttSessionHandle } from '../services/ws-client';
-import { lastResult } from './results';
+import { lastResult, pushRestoreStack } from './results';
 
 /**
  * The §3.1 dictation state machine, main-process side.
@@ -37,6 +37,13 @@ export interface ControllerDeps {
   startSttSession(sessionId: string): SttSessionHandle | null;
   /** Tier-2 insertion (§14.3). Resolves false when it degraded to clipboard. */
   insertText(text: string): Promise<boolean>;
+  /** Persist a finished dictation to local history (Phase 13). */
+  addHistory(entry: {
+    id: string;
+    finalText: string;
+    wordCount: number;
+    durationMs: number;
+  }): void;
   now?(): number;
 }
 
@@ -216,6 +223,15 @@ export class DictationController {
     const id = this.sessionId!;
     lastResult.id = id;
     lastResult.text = text;
+    pushRestoreStack(id, text);
+    if (text.trim()) {
+      this.deps.addHistory({
+        id,
+        finalText: text,
+        wordCount: text.trim().split(/\s+/).length,
+        durationMs: this.frameCount * 20,
+      });
+    }
     this.deps.broadcast('dictation:result', { id, text, appName: null });
 
     if (!text.trim()) {

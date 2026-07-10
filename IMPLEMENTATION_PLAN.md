@@ -24,7 +24,7 @@
 | 10 | Auth: magic link, JWT + refresh rotation, safeStorage, devices | §11, §17 | done | 2026-07-07 (DB migrate + Google OAuth pending — see notes) |
 | 11 | Settings system: live-apply, settings UI shell, shortcut recorder, theme | §19, §5.4 | done | 2026-07-08 |
 | 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | done | 2026-07-08 |
-| 13 | History: local SQLite + FTS5, home screen UI, undo, restore stack | §5.3, F14/F15 | todo | |
+| 13 | History: local store + search, home screen UI, undo, restore stack | §5.3, F14/F15 | done | 2026-07-10 (JSONL store; SQLite/FTS5 deferred) |
 | 14 | Stabilization: insertion matrix, reconnect/replay, error taxonomy wiring | §3.1 table, §22 | todo | |
 | 15 | Dictionary + language switching + STT keyword boosting | F10, F16 | todo | |
 | 16 | App awareness (focus.node probes, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | todo | |
@@ -122,6 +122,17 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 13 — done (2026-07-10)
+History + undo + restore stack:
+- **Store decision:** `services/history.ts` is a **JSONL append log + in-memory index** (newest-first), NOT better-sqlite3 — Electron-ABI native builds were an unacceptable gamble this sitting; interface-shaped so the SQLite/FTS5 swap drops in here (revisit in Phase 14 if entries exceed ~10k). Case-insensitive substring search, `before`-cursor pagination (cap 200), delete/clear via atomic rewrite (file stays oldest-first for cheap appends), torn-trailing-write tolerance, `stats()` (words/dictations/avgWpm this week, UTC-Monday week start), retention enforcement at boot (`30d` prune; `off` = add() no-op + clears leftovers). **8 unit tests.**
+- **Restore stack** (`dictation/results.ts`): last 5 results in memory (`pushRestoreStack`/`findRestorable`); `clipboard:copyResult` resolves lastResult → stack → history.
+- **Undo** (`InsertionService.undo()`): synthetic Ctrl/Cmd+Z within a 60 s window of the last successful paste; `insertion:undo` stub replaced. Select-back fallback + per-app scoping deferred to Phase 14+.
+- Controller: results push restore stack + `deps.addHistory` (word count + duration from frame count; empty results skipped); language stamped from settings; appName null until Phase 16.
+- **UI** `app/HistoryPage.tsx` on Home: 3 StatCards, 200 ms-debounced search, day-grouped rows (Today/Yesterday/weekday), hover Copy/Delete (optimistic), Load more, empty states; live refresh on `dictation:result`.
+- IPC: `history:query/delete/clear` wired + new `history:stats` channel (shared `HistoryStats` type).
+- Verified: turbo 12/12 (66 desktop+api tests incl. 8 new); **E2E visually confirmed** — smoke dictation (API echo) persisted to JSONL and rendered on Home (stats + Today row w/ correct WPM math).
+- Ops note: a stale API instance from a prior session was squatting port 8787 (caused one `network` false alarm) — port now cleaned before E2E runs; consider a PORT-in-use warning in api main.ts later.
 
 ### Phase 12 — done (2026-07-08)
 First-run onboarding (§3.2):
