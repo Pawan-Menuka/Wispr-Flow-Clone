@@ -68,7 +68,13 @@ function makeDeps(
 ) {
   const { connected = true, insertOk = true } = opts;
   const broadcasts: Broadcast[] = [];
-  const calls = { show: 0, hide: 0, capture: [] as boolean[], inserted: [] as string[] };
+  const calls = {
+    show: 0,
+    hide: 0,
+    capture: [] as boolean[],
+    inserted: [] as string[],
+    history: [] as string[],
+  };
   let stt: FakeStt | null = null;
   const deps: ControllerDeps = {
     broadcast: <K extends EventChannel>(channel: K, payload: FlowEvents[K]) => {
@@ -87,6 +93,9 @@ function makeDeps(
     insertText: (text) => {
       calls.inserted.push(text);
       return Promise.resolve(insertOk);
+    },
+    addHistory: (entry) => {
+      calls.history.push(entry.finalText);
     },
   };
   return { deps, broadcasts, calls, getStt: () => stt };
@@ -142,6 +151,7 @@ describe('DictationController', () => {
       'confirmed',
     ]);
     expect(calls.inserted).toEqual(['Hello world.']);
+    expect(calls.history).toEqual(['Hello world.']);
     const result = broadcasts.find((b) => b.channel === 'dictation:result');
     expect((result?.payload as { text: string }).text).toBe('Hello world.');
 

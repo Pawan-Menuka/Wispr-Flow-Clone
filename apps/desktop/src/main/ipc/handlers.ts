@@ -7,7 +7,9 @@ import type { SettingsStore } from '../services/settings-store';
 import type { WindowManager } from '../windows';
 import type { AuthService } from '../services/auth';
 import type { HotkeyService } from '../hotkeys/hotkey-service';
-import { lastResult } from '../dictation/results';
+import type { HistoryService } from '../services/history';
+import type { InsertionService } from '../services/insertion';
+import { findRestorable, lastResult } from '../dictation/results';
 import type { DictationController } from '../dictation/controller';
 
 interface IpcContext {
@@ -16,6 +18,8 @@ interface IpcContext {
   controller: DictationController;
   auth: AuthService;
   hotkeys: HotkeyService;
+  history: HistoryService;
+  insertion: InsertionService;
 }
 
 /** Domains the renderer may ask the OS browser to open (BLUEPRINT §15). */
@@ -32,7 +36,7 @@ const EXTERNAL_URL_ALLOWLIST = [
  *  3. zod-validates its arguments before touching main-process state.
  */
 export function registerIpcHandlers(ctx: IpcContext): void {
-  const { windows, settings, controller, auth, hotkeys } = ctx;
+  const { windows, settings, controller, auth, hotkeys, history, insertion } = ctx;
 
   function handle<K extends InvokeChannel>(
     channel: K,
@@ -83,11 +87,29 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   // ---------- Dictation results ----------
   handle('clipboard:copyResult', z.tuple([z.string()]), (_e, dictationId) => {
-    // Only the most recent result is retrievable until history lands (Phase 13).
-    if (lastResult.id === dictationId && lastResult.text) {
-      clipboard.writeText(lastResult.text);
-    }
+    const id = dictationId as string;
+    const text =
+      (lastResult.id === id ? lastResult.text : null) ??
+      findRestorable(id) ??
+      history.get(id)?.finalText;
+    if (text) clipboard.writeText(text);
   });
+
+  // ---------- History (§5.3) ----------
+  handle(
+    'history:query',
+    z.tuple([
+      z.object({
+        search: z.string().max(200).optional(),
+        before: z.string().optional(),
+        limit: z.number().int().min(1).max(200),
+      }),
+    ]),
+    (_e, query) => history.query(query as { search?: string; before?: string; limit: number }),
+  );
+  handle('history:delete', z.tuple([z.string()]), (_e, id) => history.delete(id as string));
+  handle('history:clear', z.tuple([]), () => history.clear());
+  handle('history:stats', z.tuple([]), () => history.stats());
 
   // ---------- Dictation ----------
   handle('dictation:cancel', z.tuple([]), () => controller.cancel());
@@ -112,12 +134,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   );
   handle('auth:logout', z.tuple([]), () => auth.logout());
 
+  handle('insertion:undo', z.tuple([]), () => insertion.undo());
+
   // ---------- Stubs (implemented in later phases; registered so the contract is live) ----------
-  handle('insertion:undo', z.tuple([]), () => ({
-    ok: false,
-    method: 'none',
-    message: 'Nothing to undo yet',
-  })); // Phase 13
   handle('rewrite:run', z.tuple([z.string(), z.string()]), () => undefined); // Phase 19
   handle('app:checkForUpdates', z.tuple([]), () => undefined); // Phase 19
 }

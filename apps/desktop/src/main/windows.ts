@@ -103,6 +103,7 @@ export class WindowManager {
     const query: Record<string, string> = {};
     if (this.smokeMode) query['smoke'] = '1';
     if (process.env['FLOW_SMOKE_ONBOARDING']) query['onboarding'] = '1';
+    if (process.env['FLOW_SMOKE_PAGE']) query['page'] = process.env['FLOW_SMOKE_PAGE'];
     const search = Object.keys(query).length
       ? `?${new URLSearchParams(query).toString()}`
       : '';

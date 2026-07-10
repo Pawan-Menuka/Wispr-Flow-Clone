@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SessionInfo } from '@flow/shared';
 import { Button } from '@flow/ui';
 import { SettingsPage } from './SettingsPage';
+import { HistoryPage } from './HistoryPage';
 import { Onboarding } from './Onboarding';
 import { useSettings, useTheme } from './useSettings';
 
@@ -10,11 +11,12 @@ type Page = 'home' | 'settings';
 const QUERY = new URLSearchParams(location.search);
 const IS_SMOKE = QUERY.has('smoke');
 const FORCE_ONBOARDING = QUERY.has('onboarding');
+// Smoke screenshots default to Settings; FLOW_SMOKE_PAGE overrides via query.
+const SMOKE_PAGE = (QUERY.get('page') as Page | null) ?? 'settings';
 
 export function App() {
   const { settings, set } = useSettings();
-  // Smoke runs land on Settings so screenshots cover the phase deliverable.
-  const [page, setPage] = useState<Page>(IS_SMOKE ? 'settings' : 'home');
+  const [page, setPage] = useState<Page>(IS_SMOKE ? SMOKE_PAGE : 'home');
   useTheme(settings?.theme);
 
   if (settings && (FORCE_ONBOARDING || (!settings.onboardingComplete && !IS_SMOKE))) {
@@ -47,20 +49,10 @@ export function App() {
   );
 }
 
-/** Placeholder home — the history timeline lands here in Phase 13. */
 function HomePage() {
-  const [version, setVersion] = useState('…');
-
-  useEffect(() => {
-    void window.flow.invoke('app:getVersion').then(setVersion);
-  }, []);
-
   return (
-    <div style={{ maxWidth: 560 }}>
-      <h1 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, margin: 0 }}>Flow</h1>
-      <p style={{ color: 'var(--fg-secondary)', marginTop: 8 }}>
-        Hold <kbd>Ctrl</kbd>+<kbd>Win</kbd> anywhere and speak. v{version}
-      </p>
+    <div>
+      <HistoryPage />
       <AccountSection />
     </div>
   );

@@ -66,6 +66,14 @@ export interface HistoryPage {
   nextBefore: string | null;
 }
 
+/** Home-screen stats header (§5.3). */
+export interface HistoryStats {
+  wordsThisWeek: number;
+  dictationsThisWeek: number;
+  /** Words per minute across this week's dictations (0 when none). */
+  avgWpm: number;
+}
+
 export interface UndoResult {
   ok: boolean;
   method?: 'synthetic-undo' | 'select-delete' | 'none';
