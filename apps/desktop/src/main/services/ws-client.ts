@@ -5,8 +5,14 @@ import { encodeAudioFrame, parseServerMessage } from '@flow/shared';
 /**
  * Persistent WS connection to the Flow API, main-process side (§7.2 —
  * survives window lifecycle, tokens never enter a renderer). Kept warm with
- * automatic reconnection (250 ms → 4 s backoff). One active dictation
- * session at a time, mirroring the server.
+ * automatic reconnection (250 ms → 4 s backoff).
+ *
+ * Reconnect-with-replay (§3.1): every audio frame of the active session is
+ * retained (60 s ring). If the socket drops mid-session, the session enters
+ * a resume window instead of failing; on reconnect the client re-issues
+ * session.start with the SAME sessionId and replays all frames (the server
+ * treats it as a fresh stream — full audio in, full transcript out). Only
+ * after RESUME_DEADLINE_MS without a connection does the session fail.
  */
 
 export interface SttSessionEvents {
@@ -32,6 +38,14 @@ export interface SttSessionHandle extends SttSessionEvents {
 
 const BACKOFF_MIN_MS = 250;
 const BACKOFF_MAX_MS = 4_000;
+const RESUME_DEADLINE_MS = 8_000;
+const FRAME_RETENTION_LIMIT = 3_000; // 60 s of 20 ms frames
+
+interface SessionOptions {
+  sessionId: string;
+  language?: string;
+  appContext: AppContext;
+}
 
 export class WsClient {
   private socket: WebSocket | null = null;
@@ -61,6 +75,8 @@ export class WsClient {
 
     socket.on('open', () => {
       this.backoff = BACKOFF_MIN_MS;
+      // A session waiting out a drop resumes on the fresh connection.
+      if (this.session && !this.session.done) this.session.beginReplay();
     });
     socket.on('message', (data, isBinary) => {
       if (isBinary) return;
@@ -71,8 +87,7 @@ export class WsClient {
       /* close handler owns reconnection */
     });
     socket.on('close', () => {
-      this.session?.emitError('NETWORK', 'connection lost');
-      this.session = null;
+      this.session?.onConnectionLost();
       if (!this.closedByUs) {
         setTimeout(() => this.open(), this.backoff);
         this.backoff = Math.min(this.backoff * 2, BACKOFF_MAX_MS);
@@ -114,32 +129,27 @@ export class WsClient {
   }
 
   /** Returns null when disconnected — caller surfaces a network error. */
-  startSession(opts: {
-    sessionId: string;
-    language?: string;
-    appContext: AppContext;
-  }): SttSessionHandle | null {
+  startSession(opts: SessionOptions): SttSessionHandle | null {
     if (!this.isConnected || !this.socket) return null;
     this.session?.cancel();
 
-    const session = new SessionImpl(this.socket, opts.sessionId);
+    const session = new SessionImpl(() => this.socket, opts);
     this.session = session;
-    this.socket.send(
-      JSON.stringify({
-        t: 'session.start',
-        sessionId: opts.sessionId,
-        ...(opts.language && opts.language !== 'auto' ? { language: opts.language } : {}),
-        appContext: opts.appContext,
-        mode: 'dictate',
-      }),
-    );
+    session.sendStart();
     return session;
   }
 }
 
 class SessionImpl implements SttSessionHandle {
+  readonly id: string;
+  done = false;
+
   private ready = false;
-  private pending: Buffer[] = [];
+  private replayFrom = 0; // index into frames not yet sent on the live socket
+  private frames: Buffer[] = [];
+  private finishSeq: number | null = null;
+  private resumeTimer: ReturnType<typeof setTimeout> | null = null;
+
   private readyCbs: (() => void)[] = [];
   private interimCbs: ((i: { text: string; stableWords: number }) => void)[] = [];
   private resultCbs: ((r: {
@@ -150,41 +160,92 @@ class SessionImpl implements SttSessionHandle {
     latencyMs: number;
   }) => void)[] = [];
   private errorCbs: ((code: string, message: string, rawTextSoFar?: string) => void)[] = [];
-  private done = false;
 
   constructor(
-    private readonly socket: WebSocket,
-    readonly id: string,
-  ) {}
+    private readonly getSocket: () => WebSocket | null,
+    private readonly opts: SessionOptions,
+  ) {
+    this.id = opts.sessionId;
+  }
+
+  // ---------- Outbound ----------
+
+  sendStart(): void {
+    this.ready = false;
+    this.sendJson({
+      t: 'session.start',
+      sessionId: this.id,
+      ...(this.opts.language && this.opts.language !== 'auto'
+        ? { language: this.opts.language }
+        : {}),
+      appContext: this.opts.appContext,
+      mode: 'dictate',
+    });
+  }
 
   sendAudio(seq: number, pcm: Int16Array): void {
     if (this.done) return;
     const frame = Buffer.from(encodeAudioFrame(seq, pcm));
-    if (this.ready && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(frame);
-    } else {
-      this.pending.push(frame); // flushed on session.ready
+    this.frames.push(frame);
+    if (this.frames.length > FRAME_RETENTION_LIMIT) {
+      this.frames.shift();
+      if (this.replayFrom > 0) this.replayFrom--;
     }
+    this.flush();
   }
 
   finish(lastSeq: number): void {
     if (this.done) return;
-    this.send({ t: 'session.finish', sessionId: this.id, lastSeq });
+    this.finishSeq = lastSeq;
+    this.flush();
   }
 
   cancel(): void {
     if (this.done) return;
     this.done = true;
-    this.send({ t: 'session.cancel', sessionId: this.id });
+    this.clearResumeTimer();
+    this.sendJson({ t: 'session.cancel', sessionId: this.id });
   }
+
+  /** Send whatever the server hasn't seen yet: pending frames, then finish. */
+  private flush(): void {
+    const socket = this.getSocket();
+    if (!this.ready || !socket || socket.readyState !== WebSocket.OPEN) return;
+    while (this.replayFrom < this.frames.length) {
+      socket.send(this.frames[this.replayFrom]!);
+      this.replayFrom++;
+    }
+    if (this.finishSeq !== null) {
+      this.sendJson({ t: 'session.finish', sessionId: this.id, lastSeq: this.finishSeq });
+      this.finishSeq = null; // sent — server owns the result now
+    }
+  }
+
+  // ---------- Resume lifecycle ----------
+
+  onConnectionLost(): void {
+    if (this.done) return;
+    this.ready = false;
+    this.replayFrom = 0; // the new stream needs the audio from the top
+    if (!this.resumeTimer) {
+      this.resumeTimer = setTimeout(() => {
+        this.emitError('NETWORK', 'connection lost');
+      }, RESUME_DEADLINE_MS);
+    }
+  }
+
+  beginReplay(): void {
+    if (this.done) return;
+    this.clearResumeTimer();
+    this.sendStart(); // ready ack triggers flush() of the full buffer
+  }
+
+  // ---------- Inbound ----------
 
   handleReady(): void {
     this.ready = true;
-    if (this.socket.readyState === WebSocket.OPEN) {
-      for (const frame of this.pending) this.socket.send(frame);
-    }
-    this.pending = [];
     for (const cb of this.readyCbs) cb();
+    this.flush();
   }
 
   emitInterim(text: string, stableWords: number): void {
@@ -200,14 +261,18 @@ class SessionImpl implements SttSessionHandle {
   }): void {
     if (this.done) return;
     this.done = true;
+    this.clearResumeTimer();
     for (const cb of this.resultCbs) cb(result);
   }
 
   emitError(code: string, message: string, rawTextSoFar?: string): void {
     if (this.done) return;
     this.done = true;
+    this.clearResumeTimer();
     for (const cb of this.errorCbs) cb(code, message, rawTextSoFar);
   }
+
+  // ---------- Subscriptions ----------
 
   onReady(cb: () => void): void {
     this.readyCbs.push(cb);
@@ -230,9 +295,19 @@ class SessionImpl implements SttSessionHandle {
     this.errorCbs.push(cb);
   }
 
-  private send(msg: object): void {
-    if (this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify(msg));
+  // ---------- Internals ----------
+
+  private clearResumeTimer(): void {
+    if (this.resumeTimer) {
+      clearTimeout(this.resumeTimer);
+      this.resumeTimer = null;
+    }
+  }
+
+  private sendJson(msg: object): void {
+    const socket = this.getSocket();
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(msg));
     }
   }
 }
