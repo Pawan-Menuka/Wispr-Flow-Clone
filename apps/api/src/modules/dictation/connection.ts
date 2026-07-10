@@ -3,6 +3,14 @@ import type { AppContext, ServerMessage, WsErrorCode } from '@flow/shared';
 import { decodeAudioFrame, parseClientMessage } from '@flow/shared';
 import type { SttProvider, SttStream } from '../ai/stt.js';
 import type { FormattingService } from '../ai/formatter.js';
+import type { QuotaService } from '../usage/quota.js';
+import type { Plan } from '@flow/shared';
+
+export interface ConnectionUser {
+  sub: string;
+  deviceId: string;
+  plan: Plan;
+}
 
 interface ActiveSession {
   id: string;
@@ -28,6 +36,8 @@ export class ClientConnection {
     private readonly socket: WebSocket,
     private readonly stt: SttProvider,
     private readonly formatter: FormattingService,
+    private readonly user: ConnectionUser | null = null,
+    private readonly quota: QuotaService | null = null,
   ) {
     socket.on('message', (data, isBinary) => {
       if (isBinary) this.onAudio(data as Buffer);
@@ -84,6 +94,15 @@ export class ClientConnection {
     profile: AppContext['profile'],
     dictionary: string[],
   ): Promise<void> {
+    // Quota gate (§3.1: block only past 110% — grace inserts still succeed).
+    if (this.user && this.quota) {
+      const decision = await this.quota.decision(this.user.sub, this.user.plan);
+      if (decision === 'block') {
+        this.sendError(sessionId, 'QUOTA', 'Weekly word limit reached — upgrade to keep dictating');
+        return;
+      }
+    }
+
     // A dangling previous session is replaced (client crashed mid-utterance).
     this.session?.stream.cancel();
     try {
@@ -165,6 +184,16 @@ export class ClientConnection {
         durationMs,
         latencyMs: Date.now() - session.finishRequestedAt,
       });
+      if (this.user && this.quota && finalText) {
+        void this.quota.record({
+          userId: this.user.sub,
+          deviceId: this.user.deviceId,
+          kind: 'dictation',
+          wordCount: finalText.trim().split(/\s+/).length,
+          durationMs,
+          latencyMs: Date.now() - session.finishRequestedAt,
+        });
+      }
     } catch (err) {
       this.sendError(
         sessionId,

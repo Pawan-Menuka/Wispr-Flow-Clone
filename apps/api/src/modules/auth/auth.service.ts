@@ -49,6 +49,8 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaClient,
     readonly tokens: TokenService,
+    /** Weekly used-words lookup (QuotaService); defaults to 0 in tests. */
+    private readonly usedWords: (userId: string) => Promise<number> = async () => 0,
   ) {}
 
   // ---------- Magic link ----------
@@ -232,7 +234,7 @@ export class AuthService {
       plan: user.plan,
       entitlements,
       quota: {
-        usedWords: 0, // usage rollup lands with quotas (Phase 18)
+        usedWords: await this.usedWords(user.id),
         limitWords: entitlements.wordsPerWeek,
         resetsAt: nextMondayIso(),
       },
