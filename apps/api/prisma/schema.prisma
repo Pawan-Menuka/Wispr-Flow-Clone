@@ -56,7 +56,7 @@ model Device {
   id         String    @id @default(uuid())
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name       String // "Mihijith's laptop"
+  name       String // "Pawan's laptop"
   platform   String // win32 | darwin | linux
   appVersion String
   lastSeenAt DateTime  @updatedAt

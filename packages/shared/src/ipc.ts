@@ -3,6 +3,7 @@ import type { Entitlements } from './entitlements.js';
 import type { ErrorKind } from './errors.js';
 import type {
   DictationState,
+  DictionaryTerm,
   HistoryPage,
   HistoryStats,
   SessionInfo,
@@ -32,6 +33,10 @@ export interface FlowInvoke {
   'history:delete': (id: string) => void;
   'history:clear': () => void;
   'history:stats': () => HistoryStats;
+
+  'dictionary:list': () => DictionaryTerm[];
+  'dictionary:add': (phrase: string, hint?: string) => void;
+  'dictionary:remove': (phrase: string) => void;
 
   'dictation:cancel': () => void;
   'insertion:undo': () => UndoResult;

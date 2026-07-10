@@ -24,7 +24,9 @@ const TAP_THRESHOLD_MS = 300;
 const MAX_SESSION_FRAMES = 5 * 60 * 50; // 5 min of 20 ms frames
 const CONFIRMED_LINGER_MS = 3_000;
 const ERROR_LINGER_MS = 4_000;
-const RESULT_TIMEOUT_MS = 6_000;
+// Must exceed the WsClient resume deadline (8 s) so a mid-finish reconnect
+// gets its replay chance before the controller degrades.
+const RESULT_TIMEOUT_MS = 10_000;
 
 export interface ControllerDeps {
   broadcast<K extends EventChannel>(channel: K, payload: FlowEvents[K]): void;
@@ -176,6 +178,7 @@ export class DictationController {
     });
     stt.onError((code, message, rawTextSoFar) => {
       if (this.sessionId === id) {
+        if (rawTextSoFar) pushRestoreStack(id, rawTextSoFar); // words never lost (§3.1)
         this.deps.broadcast('dictation:error', {
           kind: mapWsError(code),
           message,
