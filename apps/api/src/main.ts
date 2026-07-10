@@ -11,6 +11,7 @@ import { FormattingService } from './modules/ai/formatter.js';
 import { AuthService } from './modules/auth/auth.service.js';
 import { TokenService } from './modules/auth/tokens.js';
 import { registerAuthRoutes } from './modules/auth/auth.routes.js';
+import { registerSyncRoutes } from './modules/sync/sync.routes.js';
 import { getPrisma } from './modules/db.js';
 
 async function bootstrap(): Promise<void> {
@@ -27,6 +28,7 @@ async function bootstrap(): Promise<void> {
   if (!jwtSecret) console.warn('[api] JWT_SECRET not set — using the DEV secret');
   const auth = new AuthService(getPrisma(), tokens);
   registerAuthRoutes(app.getHttpAdapter().getInstance(), auth);
+  registerSyncRoutes(app.getHttpAdapter().getInstance(), getPrisma(), auth);
 
   const port = Number(process.env['PORT'] ?? 8787);
   try {
