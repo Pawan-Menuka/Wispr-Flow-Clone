@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
-    "typecheck": "prisma generate && tsc --noEmit",
-    "test": "prisma generate && vitest run",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "lint": "eslint src",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev"

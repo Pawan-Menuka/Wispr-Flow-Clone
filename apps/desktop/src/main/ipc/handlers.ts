@@ -6,6 +6,7 @@ import { OVERLAY_INVOKE_ALLOWLIST, SettingsSchema } from '@flow/shared';
 import type { SettingsStore } from '../services/settings-store';
 import type { WindowManager } from '../windows';
 import type { AuthService } from '../services/auth';
+import type { HotkeyService } from '../hotkeys/hotkey-service';
 import { lastResult } from '../dictation/results';
 import type { DictationController } from '../dictation/controller';
 
@@ -14,10 +15,15 @@ interface IpcContext {
   settings: SettingsStore;
   controller: DictationController;
   auth: AuthService;
+  hotkeys: HotkeyService;
 }
 
 /** Domains the renderer may ask the OS browser to open (BLUEPRINT §15). */
-const EXTERNAL_URL_ALLOWLIST = ['https://github.com/', 'https://flow.app/'];
+const EXTERNAL_URL_ALLOWLIST = [
+  'https://github.com/',
+  'https://flow.app/',
+  'ms-settings:privacy-microphone', // onboarding mic-permission recovery (§3.2)
+];
 
 /**
  * Typed IPC registration (BLUEPRINT §7.3). Every handler:
@@ -26,7 +32,7 @@ const EXTERNAL_URL_ALLOWLIST = ['https://github.com/', 'https://flow.app/'];
  *  3. zod-validates its arguments before touching main-process state.
  */
 export function registerIpcHandlers(ctx: IpcContext): void {
-  const { windows, settings, controller, auth } = ctx;
+  const { windows, settings, controller, auth, hotkeys } = ctx;
 
   function handle<K extends InvokeChannel>(
     channel: K,
@@ -85,6 +91,16 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   // ---------- Dictation ----------
   handle('dictation:cancel', z.tuple([]), () => controller.cancel());
+
+  // ---------- Shortcut recorder (§2 F29) ----------
+  handle('shortcut:beginCapture', z.tuple([]), () => {
+    void hotkeys.captureNextChord().then((chord) => {
+      const conflict =
+        chord && chord === settings.get('commandHotkey') ? 'Command mode shortcut' : null;
+      windows.broadcast('shortcut:captured', { chord: chord ?? '', conflict });
+    });
+  });
+  handle('shortcut:cancelCapture', z.tuple([]), () => hotkeys.cancelCapture());
 
   // ---------- Auth (§11) ----------
   handle('auth:getSession', z.tuple([]), () => auth.getSession());

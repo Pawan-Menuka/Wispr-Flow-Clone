@@ -76,6 +76,12 @@
   --pill-accent: #8b7cf0;
 }
 
+@keyframes flow-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-fast: 0ms;

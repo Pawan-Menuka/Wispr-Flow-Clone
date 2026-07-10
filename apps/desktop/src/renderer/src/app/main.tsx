@@ -4,9 +4,6 @@ import '@flow/ui/tokens.css';
 import { wireAudio } from '../audio/wire';
 import { App } from './App';
 
-// Dark until theme plumbing lands with the settings UI (Phase 11).
-document.documentElement.dataset['theme'] = 'dark';
-
 // This window hosts mic capture even while hidden (BLUEPRINT §7.2).
 wireAudio();
 

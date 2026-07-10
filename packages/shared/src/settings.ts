@@ -23,6 +23,8 @@ export const LocalSettingsSchema = z.object({
   releaseMicImmediately: z.boolean().default(false),
   updateChannel: z.enum(['stable', 'beta']).default('stable'),
   preferOffline: z.boolean().default(false),
+  /** First-run flow completed on this device (§3.2). */
+  onboardingComplete: z.boolean().default(false),
 });
 
 export const SyncedSettingsSchema = z.object({

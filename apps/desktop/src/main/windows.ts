@@ -100,11 +100,16 @@ export class WindowManager {
 
   private async loadRenderer(win: BrowserWindow, page: string): Promise<void> {
     const devUrl = process.env['ELECTRON_RENDERER_URL'];
-    const query = this.smokeMode ? { smoke: '1' } : undefined;
+    const query: Record<string, string> = {};
+    if (this.smokeMode) query['smoke'] = '1';
+    if (process.env['FLOW_SMOKE_ONBOARDING']) query['onboarding'] = '1';
+    const search = Object.keys(query).length
+      ? `?${new URLSearchParams(query).toString()}`
+      : '';
     if (devUrl) {
-      await win.loadURL(`${devUrl}/${page}${this.smokeMode ? '?smoke=1' : ''}`);
+      await win.loadURL(`${devUrl}/${page}${search}`);
     } else {
-      await win.loadFile(path.join(RENDERER_DIR, page), query ? { query } : {});
+      await win.loadFile(path.join(RENDERER_DIR, page), search ? { query } : {});
     }
   }
 
@@ -136,6 +141,13 @@ export class WindowManager {
   async captureOverlay(): Promise<Buffer | null> {
     if (!this.overlayWindow || this.overlayWindow.isDestroyed()) return null;
     const image = await this.overlayWindow.webContents.capturePage();
+    return image.toPNG();
+  }
+
+  /** Debug/smoke helper: PNG snapshot of the main window contents. */
+  async captureMain(): Promise<Buffer | null> {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return null;
+    const image = await this.mainWindow.webContents.capturePage();
     return image.toPNG();
   }
 

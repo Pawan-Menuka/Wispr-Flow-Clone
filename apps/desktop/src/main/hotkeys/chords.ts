@@ -34,6 +34,46 @@ export const ESC_KEYCODE = 1;
 
 const MODIFIER_NAMES = new Set(['ctrl', 'shift', 'alt', 'win', 'cmd', 'meta']);
 
+/** Reverse map for the shortcut recorder: keycode → canonical name. */
+const CODE_TO_NAME = new Map<number, string>();
+for (const [name, codes] of Object.entries(KEY_GROUPS)) {
+  if (name === 'cmd' || name === 'meta') continue; // 'win' is canonical
+  for (const code of codes) if (!CODE_TO_NAME.has(code)) CODE_TO_NAME.set(code, capitalize(name));
+}
+for (const [letter, code] of Object.entries(LETTER_CODES)) {
+  CODE_TO_NAME.set(code, letter.toUpperCase());
+}
+
+const MODIFIER_ORDER = ['Ctrl', 'Shift', 'Alt', 'Win'];
+
+/**
+ * Canonical chord string from the set of keys held at capture peak
+ * (modifiers first, in fixed order). Returns null when any key is unknown
+ * or the combination wouldn't parse back (e.g. a lone letter).
+ */
+export function formatChordFromKeys(downKeys: ReadonlySet<number>): string | null {
+  const names = new Set<string>();
+  for (const code of downKeys) {
+    const name = CODE_TO_NAME.get(code);
+    if (!name) return null;
+    names.add(name);
+  }
+  if (names.size === 0) return null;
+
+  const modifiers = MODIFIER_ORDER.filter((mod) => names.has(mod));
+  const rest = [...names].filter((name) => !MODIFIER_ORDER.includes(name)).sort();
+  if (rest.length > 1) return null; // multiple non-modifier keys isn't a chord
+
+  const chord = [...modifiers, ...rest].join('+');
+  return parseChord(chord) ? chord : null;
+}
+
+function capitalize(name: string): string {
+  return name.length <= 3 && name.startsWith('f') && /^\d+$/.test(name.slice(1))
+    ? name.toUpperCase()
+    : name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 export function parseChord(chord: string): ChordGroups | null {
   const parts = chord
     .split('+')
