@@ -9,6 +9,7 @@ import type { AuthService } from '../services/auth';
 import type { HotkeyService } from '../hotkeys/hotkey-service';
 import type { HistoryService } from '../services/history';
 import type { InsertionService } from '../services/insertion';
+import type { DictionaryService } from '../services/dictionary';
 import { findRestorable, lastResult } from '../dictation/results';
 import type { DictationController } from '../dictation/controller';
 
@@ -20,6 +21,7 @@ interface IpcContext {
   hotkeys: HotkeyService;
   history: HistoryService;
   insertion: InsertionService;
+  dictionary: DictionaryService;
 }
 
 /** Domains the renderer may ask the OS browser to open (BLUEPRINT §15). */
@@ -36,7 +38,7 @@ const EXTERNAL_URL_ALLOWLIST = [
  *  3. zod-validates its arguments before touching main-process state.
  */
 export function registerIpcHandlers(ctx: IpcContext): void {
-  const { windows, settings, controller, auth, hotkeys, history, insertion } = ctx;
+  const { windows, settings, controller, auth, hotkeys, history, insertion, dictionary } = ctx;
 
   function handle<K extends InvokeChannel>(
     channel: K,
@@ -110,6 +112,17 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   handle('history:delete', z.tuple([z.string()]), (_e, id) => history.delete(id as string));
   handle('history:clear', z.tuple([]), () => history.clear());
   handle('history:stats', z.tuple([]), () => history.stats());
+
+  // ---------- Dictionary (F10) ----------
+  handle('dictionary:list', z.tuple([]), () => dictionary.list());
+  handle(
+    'dictionary:add',
+    z.tuple([z.string().min(1).max(80)]).rest(z.string().max(120)),
+    (_e, phrase, hint) => dictionary.add(phrase as string, hint as string | undefined),
+  );
+  handle('dictionary:remove', z.tuple([z.string()]), (_e, phrase) =>
+    dictionary.remove(phrase as string),
+  );
 
   // ---------- Dictation ----------
   handle('dictation:cancel', z.tuple([]), () => controller.cancel());

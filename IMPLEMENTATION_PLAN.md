@@ -26,7 +26,7 @@
 | 12 | Onboarding + permission flows + practice screen | §3.2, §5.2 | done | 2026-07-08 |
 | 13 | History: local store + search, home screen UI, undo, restore stack | §5.3, F14/F15 | done | 2026-07-10 (JSONL store; SQLite/FTS5 deferred) |
 | 14 | Stabilization: reconnect/replay, error-path restore stack, insertion-matrix doc | §3.1 table, §22 | done | 2026-07-10 (manual matrix pass + Silero VAD still pending — need API keys/dogfooding) |
-| 15 | Dictionary + language switching + STT keyword boosting | F10, F16 | todo | |
+| 15 | Dictionary + language switching + STT keyword boosting | F10, F16 | done | 2026-07-10 |
 | 16 | App awareness (focus.node probes, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | todo | |
 | 17 | Sync (settings doc, outbox, conflict merge) | §19.4, F22 | todo | |
 | 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | todo | |
@@ -122,6 +122,15 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 15 — done (2026-07-10)
+Personal dictionary + language switching:
+- **Design deviation from §10/§12:** dictionary is **client-held** and travels with `session.start` (`dictionary: string[]` field, ≤50 terms, protocol test added) — works with today's unauthenticated dev sessions. Server-side DictionaryEntry storage + useCount top-200 ranking move to Phase 17 sync (schema already exists).
+- Server: `session.start.dictionary` → `stt.open({keywords})` (Deepgram `keywords` param was pre-wired in Phase 7) + `formatter.format({dictionary})` → prompt "Spell these exactly" section (pre-wired in Phase 9). Full boost path live end-to-end.
+- Desktop: `services/dictionary.ts` — `DictionaryService` (dictionary.json, atomic writes, 500-entry cap, case-insensitive dedupe/remove, 80-char limit, newest-first, `forSession()` top-50; **6 unit tests**); IPC `dictionary:list/add/remove` (new shared channels + `DictionaryTerm` type); wired into `startSttSession`.
+- Settings UI: Dictionary section — add input (Enter or button), chip list with × remove, empty-state hint.
+- Language switching: tray **Language ▸** radio submenu (8 langs + auto; menu rebuilds on settings change, stays in sync with the Settings select). Spoken language → Deepgram param was already live; spoken "switch to Spanish" command deferred to command mode (Phase 2 roadmap).
+- Verified: turbo 12/12 (shared protocol test for dictionary bounds; 6 dictionary tests), smoke exit 0. **Real-audio boost quality untested until Deepgram key lands** (add "Mihijith" and dictate it — the acceptance test).
 
 ### Phase 14 — done (2026-07-10)
 Stabilization sprint (autonomously-verifiable subset):

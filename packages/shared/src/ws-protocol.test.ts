@@ -25,6 +25,33 @@ describe('ws message parsing', () => {
     }
   });
 
+  it('session.start carries a bounded dictionary', () => {
+    const msg = parseClientMessage(
+      JSON.stringify({
+        t: 'session.start',
+        sessionId: SESSION_ID,
+        appContext: { processName: 'x' },
+        dictionary: ['Kubernetes', 'Mihijith'],
+      }),
+    );
+    if (msg?.t === 'session.start') {
+      expect(msg.dictionary).toEqual(['Kubernetes', 'Mihijith']);
+    } else {
+      expect.unreachable();
+    }
+    // over the 50-term cap → rejected
+    expect(
+      parseClientMessage(
+        JSON.stringify({
+          t: 'session.start',
+          sessionId: SESSION_ID,
+          appContext: { processName: 'x' },
+          dictionary: Array(51).fill('term'),
+        }),
+      ),
+    ).toBeNull();
+  });
+
   it('rejects unknown message types and malformed JSON', () => {
     expect(parseClientMessage(JSON.stringify({ t: 'evil.op' }))).toBeNull();
     expect(parseClientMessage('not json')).toBeNull();

@@ -12,6 +12,7 @@ import { WsClient } from './services/ws-client';
 import { InsertionService } from './services/insertion';
 import { AuthService } from './services/auth';
 import { HistoryService } from './services/history';
+import { DictionaryService } from './services/dictionary';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 const API_HTTP_URL = API_WS_URL.replace(/^ws/, 'http').replace(/\/stream$/, '');
@@ -80,6 +81,7 @@ function bootstrap(): void {
     const history = new HistoryService(app.getPath('userData'), () =>
       settings.get('historyRetention'),
     );
+    const dictionary = new DictionaryService(app.getPath('userData'));
 
     // Auth: restore any persisted session in the background (§11).
     const auth = new AuthService(API_HTTP_URL, windows);
@@ -103,6 +105,7 @@ function bootstrap(): void {
           sessionId,
           language: settings.get('language'),
           appContext: { processName: 'unknown', profile: 'default' }, // focus tracker: Phase 16
+          dictionary: dictionary.forSession(),
         }),
       // Regular smoke must never paste into whatever the user has focused;
       // --smoke-insert tests real insertion against our own window instead.
@@ -117,7 +120,16 @@ function bootstrap(): void {
     audio.onError((message) => controller.onCaptureError(message));
 
     const hotkeys = new HotkeyService();
-    registerIpcHandlers({ windows, settings, controller, auth, hotkeys, history, insertion });
+    registerIpcHandlers({
+      windows,
+      settings,
+      controller,
+      auth,
+      hotkeys,
+      history,
+      insertion,
+      dictionary,
+    });
     if (!hotkeys.setDictateChord(settings.get('hotkey'))) {
       console.warn(`[hotkeys] invalid chord "${settings.get('hotkey')}", falling back to Ctrl+Win`);
       hotkeys.setDictateChord('Ctrl+Win');
@@ -142,7 +154,7 @@ function bootstrap(): void {
       app.on('before-quit', () => hotkeys.stop());
     }
 
-    createTray(windows, audio, controller);
+    createTray(windows, audio, controller, settings);
     console.log('[boot] tray-ready');
 
     if (pendingDeepLink) {

@@ -21,6 +21,8 @@ export const SessionStartSchema = z.object({
   language: z.string().optional(),
   appContext: AppContextSchema,
   mode: z.enum(['dictate', 'command']).default('dictate'),
+  /** Personal-dictionary terms: STT keyword boosting + prompt injection (F10). */
+  dictionary: z.array(z.string().min(1).max(80)).max(50).optional(),
 });
 
 export const SessionFinishSchema = z.object({

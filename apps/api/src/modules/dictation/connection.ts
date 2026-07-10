@@ -13,6 +13,7 @@ interface ActiveSession {
   finishRequestedAt: number;
   language: string;
   profile: AppContext['profile'];
+  dictionary: string[];
 }
 
 /**
@@ -44,7 +45,12 @@ export class ClientConnection {
 
     switch (msg.t) {
       case 'session.start':
-        void this.startSession(msg.sessionId, msg.language, msg.appContext.profile);
+        void this.startSession(
+          msg.sessionId,
+          msg.language,
+          msg.appContext.profile,
+          msg.dictionary ?? [],
+        );
         break;
       case 'session.finish':
         void this.finishSession(msg.sessionId);
@@ -76,11 +82,12 @@ export class ClientConnection {
     sessionId: string,
     language: string | undefined,
     profile: AppContext['profile'],
+    dictionary: string[],
   ): Promise<void> {
     // A dangling previous session is replaced (client crashed mid-utterance).
     this.session?.stream.cancel();
     try {
-      const stream = await this.stt.open({ language, sampleRate: 16_000 });
+      const stream = await this.stt.open({ language, sampleRate: 16_000, keywords: dictionary });
       const session: ActiveSession = {
         id: sessionId,
         stream,
@@ -90,6 +97,7 @@ export class ClientConnection {
         finishRequestedAt: 0,
         language: language ?? 'auto',
         profile,
+        dictionary,
       };
       stream.onInterim((interim) => {
         if (this.session?.id === sessionId) {
@@ -130,6 +138,7 @@ export class ClientConnection {
       const { text: finalText, formatted } = await this.formatter.format(rawText, {
         language: session.language,
         appProfile: session.profile,
+        ...(session.dictionary.length ? { dictionary: session.dictionary } : {}),
       });
       const durationMs = session.frames * 20;
       this.send({
