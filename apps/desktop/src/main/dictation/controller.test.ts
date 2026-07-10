@@ -64,9 +64,13 @@ class FakeStt implements SttSessionHandle {
 
 function makeDeps(
   mode: 'hold' | 'toggle' = 'hold',
-  opts: { connected?: boolean; insertOk?: boolean } = {},
+  opts: {
+    connected?: boolean;
+    insertOk?: boolean;
+    focusedApp?: { processName: string; profile: string } | null;
+  } = {},
 ) {
-  const { connected = true, insertOk = true } = opts;
+  const { connected = true, insertOk = true, focusedApp = null } = opts;
   const broadcasts: Broadcast[] = [];
   const calls = {
     show: 0,
@@ -85,6 +89,7 @@ function makeDeps(
     requestCapture: (active) => void calls.capture.push(active),
     takePreRoll: () => [],
     getHotkeyMode: () => mode,
+    getFocusedApp: () => focusedApp,
     startSttSession: () => {
       if (!connected) return null;
       stt = new FakeStt();
@@ -250,6 +255,37 @@ describe('DictationController', () => {
 
     vi.advanceTimersByTime(10_000);
     expect(controller.currentPhase).toBe('error');
+  });
+
+  it('profile "off" refuses before recording', () => {
+    const { deps, broadcasts, calls } = makeDeps('hold', {
+      focusedApp: { processName: 'secretapp.exe', profile: 'off' },
+    });
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+
+    expect(controller.currentPhase).toBe('error');
+    expect(calls.capture).toEqual([]); // mic never started
+    const error = broadcasts.find((b) => b.channel === 'dictation:error');
+    expect((error?.payload as { kind: string }).kind).toBe('app-disabled');
+  });
+
+  it('focused app flows into insertion and history', async () => {
+    const { deps, calls, getStt, broadcasts } = makeDeps('hold', {
+      focusedApp: { processName: 'slack.exe', profile: 'slack' },
+    });
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    controller.onVad(true);
+    controller.onFrame(frame(0, true));
+    vi.advanceTimersByTime(500);
+    controller.onChordUp();
+    getStt()!.emitResult('Hey team.');
+    await flush();
+
+    const result = broadcasts.find((b) => b.channel === 'dictation:result');
+    expect((result?.payload as { appName: string }).appName).toBe('slack.exe');
+    expect(calls.inserted).toEqual(['Hey team.']);
   });
 
   it('cancel stops capture and cancels the session', () => {

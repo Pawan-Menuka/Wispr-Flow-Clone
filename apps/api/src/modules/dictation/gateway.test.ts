@@ -7,13 +7,27 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ServerMessage } from '@flow/shared';
 import { encodeAudioFrame, parseServerMessage } from '@flow/shared';
 import { attachDictationGateway } from './gateway.js';
+import { FormattingService } from '../ai/formatter.js';
+import type { LlmProvider } from '../ai/llm.js';
 
 let server: Server;
 let url = '';
+let llmCalls = 0;
 
 beforeAll(async () => {
+  // Counting LLM fake: proves the §12.6 provisional path reuses one call.
+  const countingProvider: LlmProvider = {
+    name: 'counting-fake',
+    complete: async (req) => {
+      llmCalls++;
+      return req.user.toUpperCase();
+    },
+  };
   server = createServer();
-  attachDictationGateway(server, { heartbeatMs: 60_000 });
+  attachDictationGateway(server, {
+    heartbeatMs: 60_000,
+    formatter: new FormattingService(countingProvider),
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/v1/stream`;
 });
@@ -81,10 +95,12 @@ describe('dictation gateway (echo STT)', () => {
     expect(interims.length).toBeGreaterThanOrEqual(2);
     const result = messages.at(-1)!;
     if (result.t === 'session.result') {
-      expect(result.finalText).toContain('50 frames');
-      expect(result.formatted).toBe(false);
+      expect(result.finalText).toContain('50 FRAMES'); // LLM fake uppercases
+      expect(result.formatted).toBe(true);
       expect(result.durationMs).toBe(1000);
     }
+    // Echo's textSoFar === its final text → the provisional call was reused.
+    expect(llmCalls).toBe(1);
     ws.close();
   });
 

@@ -16,6 +16,11 @@ export interface SttStream {
   cancel(): void;
   onInterim(listener: (interim: SttInterim) => void): void;
   onError(listener: (message: string) => void): void;
+  /**
+   * Finalized text accumulated so far (§12.6 parallelism) — lets the LLM
+   * start on the bulk of the transcript while the tail finalizes.
+   */
+  textSoFar(): string;
 }
 
 export interface SttOpenOptions {
@@ -71,6 +76,10 @@ class EchoSttStream implements SttStream {
 
   onError(_listener: (message: string) => void): void {
     // The echo stream cannot fail.
+  }
+
+  textSoFar(): string {
+    return this.cancelled ? '' : this.describe();
   }
 
   private describe(): string {

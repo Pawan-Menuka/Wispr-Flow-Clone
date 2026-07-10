@@ -118,6 +118,10 @@ class DeepgramStream implements SttStream {
     this.socket.close();
   }
 
+  textSoFar(): string {
+    return this.finals.join(' ');
+  }
+
   onInterim(listener: (interim: SttInterim) => void): void {
     this.interimListeners.push(listener);
   }
