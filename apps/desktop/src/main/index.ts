@@ -11,6 +11,7 @@ import { HotkeyService } from './hotkeys/hotkey-service';
 import { WsClient } from './services/ws-client';
 import { InsertionService } from './services/insertion';
 import { AuthService } from './services/auth';
+import { HistoryService } from './services/history';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 const API_HTTP_URL = API_WS_URL.replace(/^ws/, 'http').replace(/\/stream$/, '');
@@ -76,6 +77,9 @@ function bootstrap(): void {
     mainWindow.webContents.on('did-finish-load', () => audio.attach(mainWindow.webContents));
 
     const insertion = new InsertionService();
+    const history = new HistoryService(app.getPath('userData'), () =>
+      settings.get('historyRetention'),
+    );
 
     // Auth: restore any persisted session in the background (§11).
     const auth = new AuthService(API_HTTP_URL, windows);
@@ -105,13 +109,15 @@ function bootstrap(): void {
       insertText: isSmokeTest
         ? async () => true
         : (text) => insertion.insertText(text).then((r) => r.ok),
+      addHistory: (entry) =>
+        history.add({ ...entry, appName: null, language: settings.get('language'), createdAt: new Date().toISOString() }),
     });
     audio.onFrame((frame) => controller.onFrame(frame));
     audio.onVad((speaking) => controller.onVad(speaking));
     audio.onError((message) => controller.onCaptureError(message));
 
     const hotkeys = new HotkeyService();
-    registerIpcHandlers({ windows, settings, controller, auth, hotkeys });
+    registerIpcHandlers({ windows, settings, controller, auth, hotkeys, history, insertion });
     if (!hotkeys.setDictateChord(settings.get('hotkey'))) {
       console.warn(`[hotkeys] invalid chord "${settings.get('hotkey')}", falling back to Ctrl+Win`);
       hotkeys.setDictateChord('Ctrl+Win');

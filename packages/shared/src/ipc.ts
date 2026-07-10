@@ -4,6 +4,7 @@ import type { ErrorKind } from './errors.js';
 import type {
   DictationState,
   HistoryPage,
+  HistoryStats,
   SessionInfo,
   SyncStatus,
   UndoResult,
@@ -30,6 +31,7 @@ export interface FlowInvoke {
   'history:query': (q: { search?: string; before?: string; limit: number }) => HistoryPage;
   'history:delete': (id: string) => void;
   'history:clear': () => void;
+  'history:stats': () => HistoryStats;
 
   'dictation:cancel': () => void;
   'insertion:undo': () => UndoResult;

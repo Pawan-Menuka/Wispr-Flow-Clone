@@ -43,8 +43,11 @@ export interface InsertResult {
   method: 'paste' | 'clipboard-fallback';
 }
 
+const UNDO_WINDOW_MS = 60_000;
+
 export class InsertionService {
   private inFlight = false;
+  private lastInsertion: { text: string; at: number } | null = null;
 
   async insertText(text: string, processName = 'unknown'): Promise<InsertResult> {
     if (this.inFlight) return { ok: false, method: 'clipboard-fallback' };
@@ -62,6 +65,7 @@ export class InsertionService {
 
       await sleep(quirk.settleMs ?? DEFAULT_SETTLE_MS);
       this.restoreClipboard(snapshot);
+      this.lastInsertion = { text, at: Date.now() };
       return { ok: true, method: 'paste' };
     } catch (err) {
       console.warn('[insertion] paste failed:', err instanceof Error ? err.message : err);
@@ -74,6 +78,29 @@ export class InsertionService {
       return { ok: false, method: 'clipboard-fallback' };
     } finally {
       this.inFlight = false;
+    }
+  }
+
+  /**
+   * Undo the last insertion (§2 F15): synthetic Ctrl+Z aimed at the app that
+   * received the paste, valid only within a short window. Fragile by nature —
+   * the restore stack always keeps the text as the safety net.
+   */
+  async undo(): Promise<{ ok: boolean; method: 'synthetic-undo' | 'none'; message?: string }> {
+    if (!this.lastInsertion || Date.now() - this.lastInsertion.at > UNDO_WINDOW_MS) {
+      return { ok: false, method: 'none', message: 'Nothing recent to undo' };
+    }
+    try {
+      const modifier = process.platform === 'darwin' ? UiohookKey.Meta : UiohookKey.Ctrl;
+      uIOhook.keyTap(UiohookKey.Z, [modifier]);
+      this.lastInsertion = null;
+      return { ok: true, method: 'synthetic-undo' };
+    } catch (err) {
+      return {
+        ok: false,
+        method: 'none',
+        message: err instanceof Error ? err.message : 'Undo failed',
+      };
     }
   }
 
