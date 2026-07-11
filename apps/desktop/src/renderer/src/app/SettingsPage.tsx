@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { DictionaryTerm, Settings } from '@flow/shared';
+import type { DictionaryTerm, Settings, UpdateStatus } from '@flow/shared';
 import { Button, Select, SettingsRow, Slider, Switch } from '@flow/ui';
 import { ShortcutRecorder } from './ShortcutRecorder';
 import { MicSection } from './MicSection';
@@ -39,6 +39,16 @@ export function SettingsPage({
             <option value="l">Large</option>
           </Select>
         </SettingsRow>
+        <SettingsRow label="Update channel" description="Beta gets new features earlier (and rougher edges)">
+          <Select
+            value={settings.updateChannel}
+            onChange={(e) => set('updateChannel', e.target.value as Settings['updateChannel'])}
+          >
+            <option value="stable">Stable</option>
+            <option value="beta">Beta</option>
+          </Select>
+        </SettingsRow>
+        <UpdateRow />
       </Section>
 
       <Section title="Dictation">
@@ -140,6 +150,46 @@ export function SettingsPage({
         </SettingsRow>
       </Section>
     </div>
+  );
+}
+
+function UpdateRow() {
+  const [status, setStatus] = useState<UpdateStatus>({ state: 'idle' });
+  const [version, setVersion] = useState('');
+
+  useEffect(() => {
+    void window.flow.invoke('app:getVersion').then(setVersion);
+    return window.flow.on('update:status', setStatus);
+  }, []);
+
+  const description =
+    status.state === 'checking'
+      ? 'Checking for updates…'
+      : status.state === 'downloading'
+        ? `Downloading update… ${status.pct}%`
+        : status.state === 'ready'
+          ? `Version ${status.version} is ready — applies on restart`
+          : status.state === 'error'
+            ? status.message
+            : 'Updates download in the background and apply on restart';
+
+  return (
+    <SettingsRow label={`App updates${version ? ` (v${version})` : ''}`} description={description}>
+      {status.state === 'ready' ? (
+        <Button size="sm" onClick={() => void window.flow.invoke('app:installUpdate')}>
+          Restart to update
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={status.state === 'checking' || status.state === 'downloading'}
+          onClick={() => void window.flow.invoke('app:checkForUpdates')}
+        >
+          Check now
+        </Button>
+      )}
+    </SettingsRow>
   );
 }
 
