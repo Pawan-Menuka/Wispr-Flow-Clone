@@ -34,6 +34,10 @@ export interface FlowInvoke {
   'history:clear': () => void;
   'history:stats': () => HistoryStats;
 
+  /** Opens Stripe Checkout / Customer Portal in the system browser (§20). */
+  'billing:checkout': () => void;
+  'billing:portal': () => void;
+
   'dictionary:list': () => DictionaryTerm[];
   'dictionary:add': (phrase: string, hint?: string) => void;
   'dictionary:remove': (phrase: string) => void;

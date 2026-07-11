@@ -5,14 +5,18 @@ import { HEARTBEAT_INTERVAL_MS, WS_CLOSE_CODES } from '@flow/shared';
 import { EchoSttProvider } from '../ai/stt.js';
 import type { SttProvider } from '../ai/stt.js';
 import { FormattingService } from '../ai/formatter.js';
+import type { QuotaService } from '../usage/quota.js';
 import { ClientConnection } from './connection.js';
+import type { ConnectionUser } from './connection.js';
 
 export interface GatewayOptions {
   provider?: SttProvider;
   formatter?: FormattingService;
   heartbeatMs?: number;
   /** When set, WS connections must present a valid `Authorization: Bearer`. */
-  verifyToken?: (token: string) => Promise<unknown | null>;
+  verifyToken?: (token: string) => Promise<ConnectionUser | null>;
+  /** Quota enforcement + usage recording for authenticated sessions (§20). */
+  quota?: QuotaService;
 }
 
 /**
@@ -34,23 +38,25 @@ export function attachDictationGateway(
   const alive = new WeakMap<WebSocket, boolean>();
 
   wss.on('connection', (socket, request) => {
+    const attach = (user: ConnectionUser | null) => {
+      alive.set(socket, true);
+      socket.on('pong', () => alive.set(socket, true));
+      new ClientConnection(socket, provider, formatter, user, opts.quota ?? null);
+    };
+
     if (opts.verifyToken) {
       const header = request.headers.authorization;
       const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
-      void (token ? opts.verifyToken(token) : Promise.resolve(null)).then((claims) => {
-        if (!claims) {
+      void (token ? opts.verifyToken(token) : Promise.resolve(null)).then((user) => {
+        if (!user) {
           socket.close(WS_CLOSE_CODES.UNAUTHORIZED, 'authentication required');
           return;
         }
-        alive.set(socket, true);
-        socket.on('pong', () => alive.set(socket, true));
-        new ClientConnection(socket, provider, formatter);
+        attach(user);
       });
       return;
     }
-    alive.set(socket, true);
-    socket.on('pong', () => alive.set(socket, true));
-    new ClientConnection(socket, provider, formatter);
+    attach(null);
   });
 
   const heartbeat = setInterval(() => {

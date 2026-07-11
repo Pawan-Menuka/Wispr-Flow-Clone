@@ -85,16 +85,59 @@ function AccountSection() {
   };
 
   if (session) {
+    const { quota, entitlements } = session;
+    const pct =
+      quota.limitWords !== null ? Math.min(100, (quota.usedWords / quota.limitWords) * 100) : null;
     return (
       <div style={{ marginTop: 32 }}>
         <h2 style={styles.h2}>Account</h2>
         <p style={{ color: 'var(--fg-secondary)' }}>
           Signed in as <strong style={{ color: 'var(--fg-primary)' }}>{session.user.email}</strong>{' '}
-          ({session.entitlements.plan})
+          ({entitlements.plan})
         </p>
-        <Button variant="secondary" size="sm" onClick={() => void window.flow.invoke('auth:logout')}>
-          Sign out
-        </Button>
+        {pct !== null ? (
+          <div style={{ maxWidth: 320, margin: '8px 0 12px' }}>
+            <div
+              style={{
+                height: 6,
+                borderRadius: 3,
+                background: 'var(--bg-sunken)',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: `${pct}%`,
+                  height: '100%',
+                  background: pct >= 100 ? 'var(--danger)' : pct >= 80 ? 'var(--warning)' : 'var(--accent)',
+                }}
+              />
+            </div>
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--fg-tertiary)', marginTop: 4 }}>
+              {quota.usedWords.toLocaleString()} / {quota.limitWords!.toLocaleString()} words this
+              week
+            </div>
+          </div>
+        ) : null}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {entitlements.plan === 'FREE' ? (
+            <Button size="sm" onClick={() => void run(() => window.flow.invoke('billing:checkout'))}>
+              Upgrade to Pro
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void run(() => window.flow.invoke('billing:portal'))}
+            >
+              Manage billing
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => void window.flow.invoke('auth:logout')}>
+            Sign out
+          </Button>
+        </div>
+        {error ? <p style={{ color: 'var(--danger)', fontSize: 'var(--text-sm)' }}>{error}</p> : null}
       </div>
     );
   }

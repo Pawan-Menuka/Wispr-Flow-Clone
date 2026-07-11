@@ -146,6 +146,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     auth.submitMagicCode(email as string, code as string),
   );
   handle('auth:logout', z.tuple([]), () => auth.logout());
+  handle('billing:checkout', z.tuple([]), () => auth.openBilling('checkout'));
+  handle('billing:portal', z.tuple([]), () => auth.openBilling('portal'));
 
   handle('insertion:undo', z.tuple([]), () => insertion.undo());
 

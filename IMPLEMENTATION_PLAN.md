@@ -29,7 +29,7 @@
 | 15 | Dictionary + language switching + STT keyword boosting | F10, F16 | done | 2026-07-10 |
 | 16 | App awareness (focus via koffi, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | done | 2026-07-10 |
 | 17 | Sync (settings doc, conflict merge) | §19.4, F22 | done | 2026-07-10 (DB integration tests + live E2E pending Docker; history/dictionary sync deferred) |
-| 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | todo | |
+| 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | done | 2026-07-11 (needs Stripe test keys + DB for live verification) |
 | 19 | Distribution: electron-builder, signing, auto-update, channels | §14.4, §26 | todo | |
 | 20 | Observability + hardening + launch checklist sweep | §15, §21–§25, §30 | todo | |
 
@@ -122,6 +122,16 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 18 — done with pending items (2026-07-11)
+Billing + quotas (§20):
+- **Quotas** (`modules/usage/quota.ts`): `UsageStore` interface (Memory + Prisma impls), `QuotaService` — weekly words (UTC-Monday) with per-process hot cache, decisions via shared grace bands. **3 tests (memory store) always run.** Gateway/connection: authenticated sessions get a quota gate at `session.start` (**block only past 110%** → `session.error QUOTA`; grace still dictates per §3.1) and `UsageEvent` recording after each result (words/duration/latency — the §12.5 SLO dataset). Anonymous dev sessions bypass quota (no identity).
+- **Stripe** (`modules/billing/`): `stripe-events.ts` — SDK-free `processStripeEvent`: **StripeEvent-ledger idempotency** (create-or-replay), checkout.session.completed links stripeCustomerId via metadata.userId, subscription created/updated/deleted upserts Subscription + sets `User.plan` via `planForSubscriptionStatus` (active/trialing→PRO) + planExpiresAt + audit row. `billing.routes.ts` — POST /v1/billing/checkout (subscription mode, **14-day trial**, customer reuse or email, metadata.userId, success/cancel → BILLING_RETURN_URL), /portal, /webhook (raw-body signature verify via **scoped parser — must `removeContentTypeParser` before re-adding or Fastify throws FST_ERR_CTP_ALREADY_PRESENT at boot**). All env-gated: no STRIPE_SECRET_KEY → 503 BILLING_DISABLED.
+- `/users/me` quota.usedWords now real (QuotaService injected into AuthService).
+- **Desktop**: `billing:checkout/portal` IPC → `auth.openBilling()` (fetch URL + system browser, §3.3); Account card gained a **usage bar** (accent/warn/danger at 80/100%) + Upgrade to Pro / Manage billing buttons.
+- Env: STRIPE_SECRET_KEY/WEBHOOK_SECRET/PRICE_PRO/BILLING_RETURN_URL in .env.example. Stripe SDK ^17.
+- Verified: turbo 12/12 (quota + plan-mapping tests); **live route check**: health OK, checkout → 401 UNAUTHORIZED with bogus token, webhook → 503 BILLING_DISABLED; smoke exit 0.
+- **Pending real keys/DB:** `stripe-events.test.ts` integration block (idempotent replay, PRO↔FREE lifecycle) DATABASE_URL-gated, never run; end-to-end checkout with `stripe listen` webhook forwarding; `subscription.updated` WS push (needs per-user connection registry — deferred with sync's); dunning banner UI.
 
 ### Phase 17 — done with pending items (2026-07-10)
 Settings sync (§19.4):
