@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "description": "Flow — system-wide voice dictation",
+  "author": "Pawan Menuka",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -12,9 +13,12 @@
     "start": "electron .",
     "smoke": "electron . --smoke",
     "test": "vitest run",
-    "gen:icons": "node scripts/gen-icons.mjs"
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "dist": "electron-vite build && electron-builder --publish never",
+    "dist:dir": "electron-vite build && electron-builder --dir --publish never"
   },
   "dependencies": {
+    "electron-updater": "^6.3.9",
     "koffi": "^2.10.0",
     "uiohook-napi": "^1.5.4",
     "ws": "^8.18.0"
@@ -29,6 +33,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^34.0.0",
+    "electron-builder": "^26.0.12",
     "electron-vite": "^3.0.0",
     "eslint": "^9.17.0",
     "react": "^18.3.1",

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import { WindowManager } from './windows';
 import { createTray } from './tray';
 import { SettingsStore } from './services/settings-store';
@@ -16,6 +16,8 @@ import { HistoryService } from './services/history';
 import { DictionaryService } from './services/dictionary';
 import { getFocusedApp } from './services/focus';
 import { resolveProfile } from './services/profiles';
+import { UpdaterService } from './services/updater';
+import { CrashGuard } from './services/crash-guard';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 const API_HTTP_URL = API_WS_URL.replace(/^ws/, 'http').replace(/\/stream$/, '');
@@ -69,6 +71,11 @@ function bootstrap(): void {
   // ---------- Lifecycle ----------
   app.whenReady().then(async () => {
     const settings = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'));
+
+    // Crash-loop detection (§3.4.3) — before anything heavy runs.
+    const crashGuard = new CrashGuard(path.join(app.getPath('userData'), 'crash-guard.json'));
+    const crashLoop = isSmokeTest ? false : crashGuard.boot();
+    app.on('before-quit', () => crashGuard.markStable()); // a graceful quit is not a crash
 
     // Overlay is created at boot and kept hidden so it can paint in <50 ms later.
     await windows.createOverlayWindow();
@@ -142,6 +149,11 @@ function bootstrap(): void {
     audio.onVad((speaking) => controller.onVad(speaking));
     audio.onError((message) => controller.onCaptureError(message));
 
+    // Auto-update (§3.4): launch + 6-hourly checks, background download,
+    // never force-restarts. Skipped this run when a crash loop was detected.
+    const updater = new UpdaterService(windows, () => settings.get('updateChannel'));
+    if (!isSmokeTest && !crashLoop) updater.start();
+
     const hotkeys = new HotkeyService();
     registerIpcHandlers({
       windows,
@@ -152,6 +164,7 @@ function bootstrap(): void {
       history,
       insertion,
       dictionary,
+      updater,
     });
     if (!hotkeys.setDictateChord(settings.get('hotkey'))) {
       console.warn(`[hotkeys] invalid chord "${settings.get('hotkey')}", falling back to Ctrl+Win`);
@@ -167,6 +180,9 @@ function bootstrap(): void {
       if (patch.launchAtLogin !== undefined) {
         app.setLoginItemSettings({ openAtLogin: patch.launchAtLogin });
       }
+      if (patch.updateChannel !== undefined) {
+        updater.setChannel(patch.updateChannel);
+      }
     });
     if (!isSmokeTest) {
       app.setLoginItemSettings({ openAtLogin: settings.get('launchAtLogin') });
@@ -177,8 +193,26 @@ function bootstrap(): void {
       app.on('before-quit', () => hotkeys.stop());
     }
 
-    createTray(windows, audio, controller, settings);
+    createTray(windows, audio, controller, settings, updater);
     console.log('[boot] tray-ready');
+
+    if (crashLoop) {
+      // Safe mode (§3.4.3): update checks are already disabled for this run;
+      // previous-installer rollback needs a cached installer — deferred.
+      void dialog
+        .showMessageBox({
+          type: 'warning',
+          title: 'Flow keeps restarting',
+          message: 'Flow exited unexpectedly twice in a row.',
+          detail:
+            'Automatic update checks are paused for this run. If this keeps happening, reinstall Flow or send us the logs.',
+          buttons: ['Continue', 'Open logs folder'],
+          defaultId: 0,
+        })
+        .then(({ response }) => {
+          if (response === 1) void shell.openPath(app.getPath('logs'));
+        });
+    }
 
     if (pendingDeepLink) {
       handleDeepLink(pendingDeepLink);

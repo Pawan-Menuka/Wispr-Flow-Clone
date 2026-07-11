@@ -4,6 +4,7 @@ import type { WindowManager } from './windows';
 import type { AudioBridge } from './services/audio-bridge';
 import type { DictationController } from './dictation/controller';
 import type { SettingsStore } from './services/settings-store';
+import type { UpdaterService } from './services/updater';
 import { runDemoDictation } from './dictation/demo';
 import { runMicCheck } from './dictation/mic-check';
 
@@ -25,6 +26,7 @@ export function createTray(
   audio: AudioBridge,
   controller: DictationController,
   settings: SettingsStore,
+  updater: UpdaterService,
 ): Tray {
   const iconPath = path.join(resourcesDir(), 'tray.png');
   const icon = nativeImage.createFromPath(iconPath);
@@ -47,7 +49,7 @@ export function createTray(
       },
       { type: 'separator' },
       { label: 'Open Flow', click: () => windows.showMainWindow() },
-      { label: 'Check for updates', enabled: false },
+      updateMenuItem(updater),
       { type: 'separator' },
       {
         label: 'Quit Flow',
@@ -64,8 +66,23 @@ export function createTray(
   settings.onChange((patch) => {
     if (patch.language !== undefined) rebuild();
   });
+  updater.onStatus(() => rebuild()); // "Restart to update" badge (§3.4.2)
   tray.on('click', () => windows.showMainWindow());
   return tray;
+}
+
+function updateMenuItem(updater: UpdaterService): Electron.MenuItemConstructorOptions {
+  const status = updater.getStatus();
+  switch (status.state) {
+    case 'ready':
+      return { label: `Restart to update (v${status.version})`, click: () => updater.installNow() };
+    case 'checking':
+      return { label: 'Checking for updates…', enabled: false };
+    case 'downloading':
+      return { label: `Downloading update… ${status.pct}%`, enabled: false };
+    default:
+      return { label: 'Check for updates', click: () => updater.checkNow() };
+  }
 }
 
 function resourcesDir(): string {

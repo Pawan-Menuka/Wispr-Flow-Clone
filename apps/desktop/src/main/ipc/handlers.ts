@@ -10,6 +10,7 @@ import type { HotkeyService } from '../hotkeys/hotkey-service';
 import type { HistoryService } from '../services/history';
 import type { InsertionService } from '../services/insertion';
 import type { DictionaryService } from '../services/dictionary';
+import type { UpdaterService } from '../services/updater';
 import { findRestorable, lastResult } from '../dictation/results';
 import type { DictationController } from '../dictation/controller';
 
@@ -22,6 +23,7 @@ interface IpcContext {
   history: HistoryService;
   insertion: InsertionService;
   dictionary: DictionaryService;
+  updater: UpdaterService;
 }
 
 /** Domains the renderer may ask the OS browser to open (BLUEPRINT §15). */
@@ -38,7 +40,8 @@ const EXTERNAL_URL_ALLOWLIST = [
  *  3. zod-validates its arguments before touching main-process state.
  */
 export function registerIpcHandlers(ctx: IpcContext): void {
-  const { windows, settings, controller, auth, hotkeys, history, insertion, dictionary } = ctx;
+  const { windows, settings, controller, auth, hotkeys, history, insertion, dictionary, updater } =
+    ctx;
 
   function handle<K extends InvokeChannel>(
     channel: K,
@@ -146,10 +149,15 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     auth.submitMagicCode(email as string, code as string),
   );
   handle('auth:logout', z.tuple([]), () => auth.logout());
+  handle('billing:checkout', z.tuple([]), () => auth.openBilling('checkout'));
+  handle('billing:portal', z.tuple([]), () => auth.openBilling('portal'));
 
   handle('insertion:undo', z.tuple([]), () => insertion.undo());
 
+  // ---------- Updates (§3.4) ----------
+  handle('app:checkForUpdates', z.tuple([]), () => updater.checkNow());
+  handle('app:installUpdate', z.tuple([]), () => updater.installNow());
+
   // ---------- Stubs (implemented in later phases; registered so the contract is live) ----------
-  handle('rewrite:run', z.tuple([z.string(), z.string()]), () => undefined); // Phase 19
-  handle('app:checkForUpdates', z.tuple([]), () => undefined); // Phase 19
+  handle('rewrite:run', z.tuple([z.string(), z.string()]), () => undefined); // roadmap: rewrite actions
 }

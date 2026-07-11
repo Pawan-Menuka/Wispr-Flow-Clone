@@ -2,10 +2,14 @@ node_modules/
 dist/
 out/
 build/
+!apps/desktop/build/
 release/
 coverage/
 .turbo/
 *.tsbuildinfo
+
+# electron-vite's temp compiled config (electron.vite.config.<timestamp>.mjs)
+electron.vite.config.*.mjs
 
 .env
 .env.*
