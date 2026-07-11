@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { app, safeStorage } from 'electron';
+import { app, safeStorage, shell } from 'electron';
 import type { DeviceInfo, SessionInfo } from '@flow/shared';
 import { entitlementsFor } from '@flow/shared';
 import type { WindowManager } from '../windows';
@@ -43,6 +43,12 @@ export class AuthService {
   onSession(listener: (session: SessionInfo | null) => void): () => void {
     this.sessionListeners.add(listener);
     return () => this.sessionListeners.delete(listener);
+  }
+
+  /** Stripe Checkout / Portal handoff (§3.3): fetch the URL, open the browser. */
+  async openBilling(kind: 'checkout' | 'portal'): Promise<void> {
+    const { url } = await this.post<{ url: string }>(`/billing/${kind}`, {}, true);
+    if (url) await shell.openExternal(url);
   }
 
   /** Force a token refresh (e.g. after a 401 mid-flight). */
