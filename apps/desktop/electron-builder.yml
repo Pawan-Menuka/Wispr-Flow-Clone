@@ -1,0 +1,80 @@
+# Packaging + update feeds (BLUEPRINT §14.4, §26). Build with `pnpm dist`
+# (installer) or `pnpm dist:dir` (unpacked, fast config check).
+# Signing is env-gated — see docs/distribution.md for cert setup.
+
+appId: app.flow.desktop
+productName: Flow
+artifactName: ${productName}-Setup-${version}.${ext}
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - "!**/*.map"
+
+# tray.ts reads icons from process.resourcesPath when packaged.
+extraResources:
+  - from: resources
+    to: .
+
+# electron-builder needs an exact version to fetch platform binaries — the
+# devDependency range stays, this must track the installed major.minor.patch.
+electronVersion: 34.5.8
+
+# koffi + uiohook-napi ship N-API prebuilds that work across Electron versions;
+# rebuilding would demand a native toolchain for zero gain.
+npmRebuild: false
+
+asarUnpack:
+  - "**/*.node"
+  - node_modules/koffi/**
+  - node_modules/uiohook-napi/**
+
+# Installer registers flowapp:// (auth deep links, §11).
+protocols:
+  - name: Flow
+    schemes: [flowapp]
+
+# electron-updater feed. Stable releases are normal GitHub releases;
+# beta channel = prereleases versioned x.y.z-beta.n (§26).
+publish:
+  provider: github
+  owner: Pawan-Menuka
+  repo: Wispr-Flow-Clone
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.png
+  # Windows signing (Azure Trusted Signing): uncomment once the account
+  # exists; electron-builder skips signing while this is absent.
+  # azureSignOptions:
+  #   publisherName: <cert subject name>
+  #   endpoint: https://weu.codesigning.azure.net
+  #   codeSigningAccountName: <account>
+  #   certificateProfileName: <profile>
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  differentialPackage: true
+  # Uninstaller keeps user data (history/dictionary/settings) by default;
+  # a data-removal checkbox needs a custom NSIS include — tracked for later.
+  deleteAppDataOnUninstall: false
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+    - target: zip # required by Squirrel.Mac update feed
+  icon: resources/icon.png
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization activates automatically when APPLE_ID /
+  # APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID env vars are set in CI.
+  notarize: false

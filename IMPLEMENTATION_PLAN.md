@@ -30,7 +30,7 @@
 | 16 | App awareness (focus via koffi, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | done | 2026-07-10 |
 | 17 | Sync (settings doc, conflict merge) | §19.4, F22 | done | 2026-07-10 (DB integration tests + live E2E pending Docker; history/dictionary sync deferred) |
 | 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | done | 2026-07-11 (needs Stripe test keys + DB for live verification) |
-| 19 | Distribution: electron-builder, signing, auto-update, channels | §14.4, §26 | todo | |
+| 19 | Distribution: electron-builder, signing, auto-update, channels | §14.4, §26 | done | 2026-07-11 (installer built + packaged smoke passed; real signing needs certs) |
 | 20 | Observability + hardening + launch checklist sweep | §15, §21–§25, §30 | todo | |
 
 ## Environment / decisions log
@@ -122,6 +122,17 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 19 — done (2026-07-11)
+Distribution (§14.4, §26, §3.4):
+- **electron-builder** (`apps/desktop/electron-builder.yml`): NSIS x64 (assisted, per-user, differential blockmap), `flowapp://` registered by installer, icons via `extraResources` (tray.ts reads `process.resourcesPath`), natives `asarUnpack`ed, **`npmRebuild: false`** (koffi/uiohook-napi N-API prebuilds — no toolchain needed), publish feed = GitHub releases (Pawan-Menuka/Wispr-Flow-Clone). **Landmine: `electronVersion` must be pinned exactly in the yml** (34.5.8 currently) — electron-builder can't resolve the devDep range under pnpm-hoisted layout. mac config scaffolded (dmg+zip, hardened runtime, `build/entitlements.mac.plist` with audio-input; `.gitignore` needed `!apps/desktop/build/`). Scripts: `pnpm dist` / `dist:dir` in apps/desktop.
+- **UpdaterService** (`src/main/services/updater.ts`): electron-updater, check at launch+30 s and 6-hourly, background download, `autoInstallOnAppQuit` (never force-restarts), status → `update:status` broadcasts + tray rebuild ("Restart to update (vX)" / "Downloading… n%"), ready toast via Notification. Channel from `updateChannel` setting live (beta → allowPrerelease + channel beta; releases must be tagged `x.y.z-beta.n` prereleases). Unpackaged builds skip checks. IPC `app:checkForUpdates`/`app:installUpdate` wired (stubs replaced).
+- **Crash-loop guard** (`src/main/services/crash-guard.ts`, §3.4.3): boot record marked stable after 60 s uptime or graceful quit; two never-stable runs in a row → safe-mode dialog (Continue / Open logs) + update checks skipped that run. 5 tests (pure `assessBoot` + file round-trip). Previous-installer rollback deferred (needs installer cache); Sentry `updateRollback` tag lands with Phase 20.
+- **Settings UI**: General gained "Update channel" select + "App updates (vX)" row (live status, Check now / Restart to update).
+- `docs/distribution.md` — build/release/channel/staged-rollout runbook + signing setup (Azure Trusted Signing env-gated in yml comments; Apple notarize flags). Signing itself blocked on cert purchases (user decision).
+- Cleanup: stray compiled `electron.vite.config.<ts>.mjs` untracked + gitignored.
+- Verified: turbo 12/12 (53 desktop tests incl. 5 new); dev smoke exit 0; **`release/win-unpacked/Flow.exe --smoke` exit 0** (packaged app: asar + unpacked natives + koffi focus probe all work); full NSIS build produced `Flow-Setup-0.0.1.exe` + blockmap + latest.yml; settings screenshot confirmed new rows.
+- **Not yet verified (needs human/GUI):** running the installer end-to-end (shortcuts, uninstall, deep-link registry), a real update round-trip against a GitHub release, beta-channel feed. Suggest dogfooding the installer next sitting.
 
 ### Phase 18 — done with pending items (2026-07-11)
 Billing + quotas (§20):
