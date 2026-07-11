@@ -19,7 +19,9 @@ export const SyncedDocSchema = z.object({
 export type SyncedDoc = z.infer<typeof SyncedDocSchema>;
 
 export const SyncPutSchema = z.object({
-  values: SyncedSettingsSchema.partial(),
+  // .strict(): zod strips unknown keys by default — junk keys must 400, not
+  // slip through silently (caught by sync.routes.test.ts on its first CI run).
+  values: SyncedSettingsSchema.partial().strict(),
   stamps: z.record(z.string(), z.string()),
   baseVersion: z.number().int().nonnegative(),
 });

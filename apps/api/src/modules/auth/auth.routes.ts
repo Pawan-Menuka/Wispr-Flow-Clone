@@ -44,7 +44,10 @@ export function registerAuthRoutes(fastify: FastifyInstance, auth: AuthService):
     const code = await auth.createMagicCode(body.data.email);
     // Email delivery arrives with an ESP key; until then the code goes to the
     // server console ONLY (enumeration-safe: response is identical either way).
-    console.log(`[auth] magic code for ${body.data.email}: ${code}`);
+    // Dev-only: plaintext email + code must never reach production logs (§25).
+    if (process.env['NODE_ENV'] !== 'production') {
+      console.log(`[auth] magic code for ${body.data.email}: ${code}`);
+    }
     return reply.status(204).send();
   });
 

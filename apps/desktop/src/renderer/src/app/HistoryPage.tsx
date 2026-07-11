@@ -27,7 +27,6 @@ export function HistoryPage() {
   useEffect(() => {
     // New dictations land while the window is open.
     return window.flow.on('dictation:result', () => void reload(search));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadMore = async () => {

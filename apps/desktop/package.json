@@ -18,6 +18,8 @@
     "dist:dir": "electron-vite build && electron-builder --dir --publish never"
   },
   "dependencies": {
+    "@sentry/electron": "^7.15.0",
+    "electron-log": "^5.2.4",
     "electron-updater": "^6.3.9",
     "koffi": "^2.10.0",
     "uiohook-napi": "^1.5.4",
