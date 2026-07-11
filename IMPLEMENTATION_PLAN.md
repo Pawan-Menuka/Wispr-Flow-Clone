@@ -30,7 +30,9 @@
 | 16 | App awareness (focus via koffi, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | done | 2026-07-10 |
 | 17 | Sync (settings doc, conflict merge) | §19.4, F22 | done | 2026-07-10 (DB integration tests + live E2E pending Docker; history/dictionary sync deferred) |
 | 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | done | 2026-07-11 (needs Stripe test keys + DB for live verification) |
+
 | 19 | Distribution: electron-builder, signing, auto-update, channels | §14.4, §26 | done | 2026-07-11 (installer built + packaged smoke passed; real signing needs certs) |
+
 | 20 | Observability + hardening + launch checklist sweep | §15, §21–§25, §30 | todo | |
 
 ## Environment / decisions log
