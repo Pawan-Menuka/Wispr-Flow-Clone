@@ -30,10 +30,8 @@
 | 16 | App awareness (focus via koffi, profiles, rules UI) + parallel-LLM latency trick | §12.6, §14.2, F11 | done | 2026-07-10 |
 | 17 | Sync (settings doc, conflict merge) | §19.4, F22 | done | 2026-07-10 (DB integration tests + live E2E pending Docker; history/dictionary sync deferred) |
 | 18 | Billing: Stripe checkout/portal/webhooks, quotas, gating, trial | §20 | done | 2026-07-11 (needs Stripe test keys + DB for live verification) |
-
 | 19 | Distribution: electron-builder, signing, auto-update, channels | §14.4, §26 | done | 2026-07-11 (installer built + packaged smoke passed; real signing needs certs) |
-
-| 20 | Observability + hardening + launch checklist sweep | §15, §21–§25, §30 | todo | |
+| 20 | Observability + hardening + launch checklist sweep | §15, §21–§25, §30 | done | 2026-07-11 (CI live, 0 audit vulns, Sentry/PostHog env-gated; accounts pending) |
 
 ## Environment / decisions log
 
@@ -124,6 +122,15 @@ Real STT pipeline, desktop↔API:
 - Smoke: dictation loop now injects synthetic `onVad(true)` (tests transport, not VAD — quiet rooms were skipping the round-trip); accepts result/no-speech/network outcomes and prints result text.
 - **Verified E2E on dev machine**: API (echo) + `electron . --smoke --smoke-mic` → `result: "[echo] received 1.1s of audio (56 frames)"` — full path mic→worklet→MessagePort→WsClient→gateway→provider→overlay. Turbo 11/11 green.
 - **To go live**: set `DEEPGRAM_API_KEY` in apps/api `.env`, run api + desktop, hold Ctrl+Win and speak — everything else is wired. Not yet tested against real Deepgram (no key on this machine).
+
+### Phase 20 — done (2026-07-11)
+Observability + hardening (§15, §21–25, §30). Details in `docs/observability.md`.
+- **CI at last** (`.github/workflows/ci.yml`): ubuntu verify job with **Postgres 16 service + `prisma db push`** → the DB-gated integration suites (auth ×5, sync ×4, stripe ×2) now execute on every PR (never run locally — Docker broken); `turbo build typecheck lint test` + `pnpm audit --prod --audit-level high`; windows job runs the Electron smoke. `release-desktop.yml` on tag `v*` → NSIS installer to a **draft** GitHub release + packaged-exe smoke. **Lint is now in CI** — fixed latent errors (api type-import; desktop: worklet globals ignored, inline `import()` types allowed for lazy-require files, dead react-hooks disable comment).
+- **Dependency hardening**: `pnpm audit` had 16 vulns (9 high, 1 critical — all via @nestjs/platform-fastify@10/Fastify 4) → **upgraded Nest 10→11 / Fastify 5**; scoped raw-body parser + routes survived (live boot verified: health OK, webhook 503, WS session E2E). Now **zero known vulnerabilities** (@sentry/node@10, @sentry/electron@7).
+- **Log redaction** (`apps/api/src/obs/redact.ts`): drop-list (finalText/rawText/text/transcript/tokens…) + email/processName hashing + `logEvent()`; **log-hygiene tests both sides** scan source for console calls referencing transcript identifiers (§30 checklist item). Magic-code console print now dev-only. One `[obs] session.completed` line per session (durationMs/latencyMs/words/formatted/profile — §12.5 SLO data).
+- **Desktop**: `services/metrics.ts` `SessionMetrics` (observes controller broadcasts → `[metrics]` stage-timing line + telemetry; 3 tests assert no text leaks); `services/telemetry.ts` PostHog via plain HTTP, **doubly gated** (telemetry setting AND build-time `FLOW_POSTHOG_KEY`), anon install UUID, batch/flush, 4 tests; `services/crash-reporting.ts` Sentry env-gated (`FLOW_SENTRY_DSN`) with breadcrumb/extra scrubbing; electron-log rotating files (lazy-required, off in smoke); §24 crash recovery: uncaughtException → relaunch once (crash guard stops loops), render-process-gone logged.
+- Verified: turbo **16/16** (build/typecheck/lint/test); audit clean; live API boot on Nest 11 + full mic smoke against it — both new observability lines observed with real data and no text; packaged `dist:dir` exe smoke exit 0.
+- **§30 sweep — remaining items need user resources/accounts**: Sentry DSN + PostHog key (create accounts, bake into build), signing certs (Ph. 19), API keys/Docker verification debt (HANDOFF list), k6 load test, Playwright E2E, axe/NVDA pass, ZAP scan, landing page/policies/pricing, staged-rollout dry run. Deferred code items: WS push for subscription/sync changes (needs per-user connection registry), Silero VAD, SQLite/FTS5 history, diagnostics-bundle export (`app:exportDiagnostics` still stubbed), uninstaller data-removal checkbox.
 
 ### Phase 19 — done (2026-07-11)
 Distribution (§14.4, §26, §3.4):

@@ -1,0 +1,35 @@
+# Desktop release (BLUEPRINT §21, §26): on tag vX.Y.Z (or vX.Y.Z-beta.N),
+# build the NSIS installer and upload it to a DRAFT GitHub release with the
+# electron-updater feed files. Publish the draft by hand after a sanity pass.
+# Signing activates automatically once the Azure Trusted Signing config in
+# electron-builder.yml is uncommented and the AZURE_* secrets exist.
+name: Release desktop
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # create the draft release + upload assets
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec turbo run build --filter @flow/desktop
+      - name: Build installer and upload to draft release
+        run: pnpm exec electron-builder --win --publish always
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke-test the packaged app
+        run: ./release/win-unpacked/Flow.exe --smoke
+        working-directory: apps/desktop

@@ -4,6 +4,7 @@ import { decodeAudioFrame, parseClientMessage } from '@flow/shared';
 import type { SttProvider, SttStream } from '../ai/stt.js';
 import type { FormattingService } from '../ai/formatter.js';
 import type { QuotaService } from '../usage/quota.js';
+import { logEvent } from '../../obs/redact.js';
 import type { Plan } from '@flow/shared';
 
 export interface ConnectionUser {
@@ -183,6 +184,15 @@ export class ClientConnection {
         wordCount: finalText ? finalText.trim().split(/\s+/).length : 0,
         durationMs,
         latencyMs: Date.now() - session.finishRequestedAt,
+      });
+      // §25: one structured line per session — stage timings only, never text.
+      logEvent('session.completed', {
+        sessionId,
+        durationMs,
+        latencyMs: Date.now() - session.finishRequestedAt,
+        words: finalText ? finalText.trim().split(/\s+/).length : 0,
+        formatted,
+        profile: session.profile,
       });
       if (this.user && this.quota && finalText) {
         void this.quota.record({

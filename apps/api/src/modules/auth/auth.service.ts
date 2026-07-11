@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { entitlementsFor } from '@flow/shared';
 import type { Plan } from '@flow/shared';
+import type {
+  TokenService} from './tokens.js';
 import {
   REFRESH_TOKEN_TTL_MS,
-  TokenService,
   generateMagicCode,
   generateRefreshToken,
   sha256,

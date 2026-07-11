@@ -18,11 +18,34 @@ import { getFocusedApp } from './services/focus';
 import { resolveProfile } from './services/profiles';
 import { UpdaterService } from './services/updater';
 import { CrashGuard } from './services/crash-guard';
+import { initCrashReporting } from './services/crash-reporting';
+import { TelemetryService } from './services/telemetry';
+import { SessionMetrics } from './services/metrics';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 const API_HTTP_URL = API_WS_URL.replace(/^ws/, 'http').replace(/\/stream$/, '');
 
 const isSmokeTest = process.argv.includes('--smoke');
+
+// Rotating file logs (§25): console.* also lands in userData/logs, timings
+// and event names only — the log-hygiene test enforces the no-transcript rule.
+if (!isSmokeTest) {
+  try {
+    // Lazy require keeps smoke runs byte-identical to before.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('electron-log/main') as
+      | typeof import('electron-log/main')
+      | { default: typeof import('electron-log/main').default };
+    const log = 'default' in mod ? mod.default : mod;
+    log.initialize();
+    log.transports.file.maxSize = 5 * 1024 * 1024;
+    Object.assign(console, log.functions);
+  } catch (err) {
+    console.warn('[logs] electron-log unavailable:', err instanceof Error ? err.message : err);
+  }
+}
+
+initCrashReporting(); // no-op without FLOW_SENTRY_DSN (§F25)
 
 // ---------- Single instance ----------
 const gotLock = app.requestSingleInstanceLock();
@@ -77,6 +100,28 @@ function bootstrap(): void {
     const crashLoop = isSmokeTest ? false : crashGuard.boot();
     app.on('before-quit', () => crashGuard.markStable()); // a graceful quit is not a crash
 
+    // §24 crash recovery: log + relaunch once; the crash guard turns repeat
+    // offenders into safe mode instead of an infinite relaunch loop.
+    process.on('uncaughtException', (err) => {
+      console.error('[crash] uncaught exception:', err);
+      if (!isSmokeTest && !crashLoop) app.relaunch();
+      app.exit(1);
+    });
+    app.on('render-process-gone', (_event, _contents, details) => {
+      // Renderer crashes surface as a log line; windows are recreated lazily
+      // on next use (tray → Open Flow). Reasons like 'clean-exit' are normal.
+      if (details.reason !== 'clean-exit') {
+        console.error(`[crash] renderer gone: ${details.reason} (exit ${details.exitCode})`);
+      }
+    });
+
+    // Telemetry (§23): gated on the user setting AND a build-time key.
+    const telemetry = new TelemetryService(app.getPath('userData'), () =>
+      settings.get('telemetry'),
+    );
+    const metrics = new SessionMetrics(telemetry, () => settings.get('language'));
+    app.on('before-quit', () => void telemetry.flush());
+
     // Overlay is created at boot and kept hidden so it can paint in <50 ms later.
     await windows.createOverlayWindow();
     const mainWindow = await windows.createMainWindow();
@@ -108,7 +153,10 @@ function bootstrap(): void {
 
     // Dictation core: hotkey → controller → audio + WS session (§3.1).
     const controller = new DictationController({
-      broadcast: (channel, payload) => windows.broadcast(channel, payload),
+      broadcast: (channel, payload) => {
+        metrics.observe(channel, payload); // stage timings + telemetry (§23/§25)
+        windows.broadcast(channel, payload);
+      },
       showOverlay: () => windows.showOverlay(),
       hideOverlay: () => windows.hideOverlay(),
       requestCapture: (active) => audio.requestCapture(active),

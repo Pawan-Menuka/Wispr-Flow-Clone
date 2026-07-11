@@ -17,6 +17,23 @@ import { PrismaUsageStore, QuotaService } from './modules/usage/quota.js';
 import { getPrisma } from './modules/db.js';
 
 async function bootstrap(): Promise<void> {
+  // Crash reporting (F25), env-gated: no SENTRY_DSN → permanent no-op.
+  const sentryDsn = process.env['SENTRY_DSN'];
+  if (sentryDsn) {
+    const Sentry = await import('@sentry/node');
+    Sentry.init({
+      dsn: sentryDsn,
+      environment: process.env['NODE_ENV'] ?? 'development',
+      tracesSampleRate: 0, // crash triage only
+      beforeSend(event) {
+        delete event.extra; // §25: no free-form context objects in reports
+        if (event.request) delete event.request.data;
+        return event;
+      },
+    });
+    console.log('[api] sentry enabled');
+  }
+
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
     logger: ['warn', 'error', 'log'],
   });
