@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSyncedDocs } from './sync.js';
+import { SyncPutSchema, mergeSyncedDocs } from './sync.js';
 
 const T1 = '2026-07-10T10:00:00.000Z';
 const T2 = '2026-07-10T11:00:00.000Z';
@@ -56,5 +56,25 @@ describe('mergeSyncedDocs', () => {
     );
     expect(result.values.appRules).toEqual({ 'b.exe': 'off' });
     expect(result.applyLocally).toEqual({ appRules: { 'b.exe': 'off' } });
+  });
+});
+
+describe('SyncPutSchema', () => {
+  it('accepts a valid partial synced-settings payload', () => {
+    const parsed = SyncPutSchema.safeParse({
+      values: { language: 'de' },
+      stamps: { language: T1 },
+      baseVersion: 0,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('REJECTS unknown value keys instead of silently stripping them', () => {
+    const parsed = SyncPutSchema.safeParse({
+      values: { hacked: true },
+      stamps: {},
+      baseVersion: 0,
+    });
+    expect(parsed.success).toBe(false);
   });
 });
