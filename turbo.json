@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv": ["DATABASE_URL", "ANTHROPIC_API_KEY", "DEEPGRAM_API_KEY"],
   "tasks": {
     "db:generate": {
       "cache": false
