@@ -1,4 +1,4 @@
-# Flow
+# Wispr Flow
 
 System-wide voice dictation for desktop — hold a hotkey anywhere, speak, get polished text at your cursor. A production-grade Wispr Flow clone.
 
