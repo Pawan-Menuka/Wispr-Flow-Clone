@@ -26,6 +26,11 @@
       "prisma",
       "@prisma/client",
       "@prisma/engines"
-    ]
+    ],
+    "overrides": {
+      "find-my-way": "^9.7.0",
+      "fast-uri@3": "^3.1.4",
+      "fast-uri@4": "^4.1.1"
+    }
   }
 }

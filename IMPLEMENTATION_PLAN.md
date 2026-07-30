@@ -40,6 +40,11 @@
 
 ## Phase notes
 
+### Post-phase fix — audit drift (2026-07-30)
+- CI audit gate went red on advisories published after Phase 20 (find-my-way, fast-uri ×2 lines, brace-expansion). **Upstream has not shipped**: even @nestjs/platform-fastify@11.1.28 still pins find-my-way 9.6.0 → used root `pnpm.overrides` with **version-scoped selectors**: `find-my-way ^9.7.0`, `fast-uri@3 ^3.1.4`, `fast-uri@4 ^4.1.1` (two fast-uri instances coexist: ajv wants ^3, fast-json-stringify wants ^4 — a single unscoped override would force an incompatible major on one of them). **Revisit/remove these once Nest bumps.** Note: a `_comment` key inside `overrides` is a hard error (ERR_PNPM_INVALID_SELECTOR) — every key is parsed as a selector.
+- `packages/config` declared eslint/@eslint/js/typescript-eslint as **dependencies**, which is why a lint-only package polluted `pnpm audit --prod` (brace-expansion via eslint>minimatch). Moved to devDependencies — the honest fix, not a suppression; hoisted linker keeps `@flow/config/eslint.base` resolvable (verified: turbo lint green across all packages).
+- Since the overrides swap Fastify's router + URI parser, verified live rather than by compile alone: boot OK, `/health` 200, zod 400 envelope on /v1/auth/magic, 404 negative path, and a real WS `session.start` round-trip. turbo 16/16, `pnpm audit --prod` clean at all severities.
+
 ### Post-phase fix — .env was never loaded (2026-07-30)
 - **Bug**: `apps/api` documented `.env` (README/.env.example/HANDOFF all reference it) but nothing ever loaded it — no dotenv, no @nestjs/config, and `tsx watch` does not read env files. Every env-gated feature silently used its stub even with a valid `.env` present. Surfaced the moment Pawan added a real DEEPGRAM_API_KEY and still got echo transcripts.
 - **Fix**: `apps/api/src/env.ts` (dotenv `config({quiet:true})`) imported as the **first** import in `main.ts` — ESM evaluates imports in declaration order, so it must precede anything that reads process.env. Added `dotenv` dep.
