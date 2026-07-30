@@ -40,6 +40,11 @@
 
 ## Phase notes
 
+### Post-phase fix — .env was never loaded (2026-07-30)
+- **Bug**: `apps/api` documented `.env` (README/.env.example/HANDOFF all reference it) but nothing ever loaded it — no dotenv, no @nestjs/config, and `tsx watch` does not read env files. Every env-gated feature silently used its stub even with a valid `.env` present. Surfaced the moment Pawan added a real DEEPGRAM_API_KEY and still got echo transcripts.
+- **Fix**: `apps/api/src/env.ts` (dotenv `config({quiet:true})`) imported as the **first** import in `main.ts` — ESM evaluates imports in declaration order, so it must precede anything that reads process.env. Added `dotenv` dep.
+- Verified: boot log flips `STT: echo` → `STT: deepgram` with a .env present; invalid key surfaces as `session.error STT_FAILED "Unexpected server response: 401"` (visible in the overlay, not silence); boot still succeeds with DATABASE_URL set but Postgres unreachable (Prisma connects lazily) so dictation is unaffected by having no DB; turbo 16/16.
+
 ### Phase 0 — done (2026-07-07)
 - Root: `package.json` (pnpm@10.32.1, turbo+prettier scripts), `pnpm-workspace.yaml` (apps/*, packages/*), `turbo.json` (build/typecheck/lint/test/dev), `.npmrc` (**node-linker=hoisted** — Electron tooling requirement, do not change), `.gitignore`, `.editorconfig`, `prettier.config.mjs`.
 - `packages/config`: `tsconfig.base.json` (strict, ES2022, Bundler resolution), `tsconfig.node.json` (NodeNext), `tsconfig.react.json` (DOM+jsx), `eslint.base.mjs` (flat config, typescript-eslint), exported via package.json `exports`.
