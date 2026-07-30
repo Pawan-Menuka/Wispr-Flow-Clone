@@ -17,6 +17,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@flow/shared": "workspace:*",
     "@prisma/client": "^6.2.1",
+    "dotenv": "^17.2.3",
     "@sentry/node": "^10.32.1",
     "jose": "^5.9.6",
     "@nestjs/common": "^11.1.24",
