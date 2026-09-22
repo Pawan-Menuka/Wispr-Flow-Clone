@@ -190,17 +190,30 @@ describe('DictationController', () => {
     expect((interim?.payload as { text: string }).text).toBe('hello wor');
   });
 
-  it('tap latches into toggle; VAD silence finishes', () => {
+  it('hold mode: even a quick release finishes immediately', () => {
     const { deps, getStt } = makeDeps('hold');
     const controller = new DictationController(deps);
 
     controller.onChordDown();
-    controller.onChordUp(); // instant release = tap → latched
+    controller.onVad(true);
+    controller.onFrame(frame(0, true));
+    controller.onChordUp();
+
+    expect(controller.currentPhase).toBe('processing');
+    expect(getStt()!.finished).toBe(0);
+  });
+
+  it('toggle mode: release keeps listening and the next press finishes', () => {
+    const { deps, getStt } = makeDeps('toggle');
+    const controller = new DictationController(deps);
+
+    controller.onChordDown();
+    controller.onChordUp();
     controller.onVad(true);
     controller.onFrame(frame(0, true));
     expect(controller.currentPhase).toBe('listening');
 
-    controller.onVad(false);
+    controller.onChordDown();
     expect(controller.currentPhase).toBe('processing');
     expect(getStt()!.finished).toBe(0);
   });

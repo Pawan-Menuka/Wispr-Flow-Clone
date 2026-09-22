@@ -11,16 +11,13 @@ import { lastResult, pushRestoreStack } from './results';
  * transitions are unit-testable.
  *
  * Hotkey semantics (BLUEPRINT §2 F1):
- *  - hotkeyMode 'hold': chord-up finishes (push-to-talk), unless the press was
- *    a tap (< 300 ms) — then it latches into toggle: next tap or 2 s VAD
- *    silence finishes.
+ *  - hotkeyMode 'hold': chord-up always finishes (strict push-to-talk).
  *  - hotkeyMode 'toggle': every press toggles.
  * Audio streams to the backend WS session while LISTENING (§12.5 — STT runs
  * during speech); finish() just awaits the server's result, capped by
  * RESULT_TIMEOUT_MS before degrading to a network error.
  */
 
-const TAP_THRESHOLD_MS = 300;
 const MAX_SESSION_FRAMES = 5 * 60 * 50; // 5 min of 20 ms frames
 const CONFIRMED_LINGER_MS = 3_000;
 const ERROR_LINGER_MS = 4_000;
@@ -38,9 +35,10 @@ export interface ControllerDeps {
   /** Focus snapshot at chord-down (§3.1 step 2). Null = unknown/non-Windows. */
   getFocusedApp(): { processName: string; profile: string } | null;
   /** Opens a backend dictation session; null when the API is unreachable. */
-  startSttSession(sessionId: string, app: { processName: string; profile: string } | null):
-    | SttSessionHandle
-    | null;
+  startSttSession(
+    sessionId: string,
+    app: { processName: string; profile: string } | null,
+  ): SttSessionHandle | null;
   /** Tier-2 insertion (§14.3); processName drives the quirks table. */
   insertText(text: string, processName: string | null): Promise<boolean>;
   /** Persist a finished dictation to local history (Phase 13). */
@@ -51,7 +49,6 @@ export interface ControllerDeps {
     wordCount: number;
     durationMs: number;
   }): void;
-  now?(): number;
 }
 
 function mapWsError(code: string): ErrorKind {
@@ -75,7 +72,6 @@ export class DictationController {
   private stt: SttSessionHandle | null = null;
   private focusedApp: { processName: string; profile: string } | null = null;
   private latched = false; // true once the session runs in toggle mode
-  private chordDownAt = 0;
   private sawSpeech = false;
   private frameCount = 0;
   private lastSeq = 0;
@@ -102,12 +98,8 @@ export class DictationController {
   onChordUp(): void {
     if (this.phase !== 'armed' && this.phase !== 'listening') return;
     if (this.latched) return; // toggle sessions ignore chord release
-    const heldMs = this.now() - this.chordDownAt;
-    if (this.deps.getHotkeyMode() === 'toggle' || heldMs < TAP_THRESHOLD_MS) {
-      this.latched = true; // tap → latch into toggle
-    } else {
-      this.finish(); // push-to-talk release
-    }
+    if (this.deps.getHotkeyMode() === 'toggle') this.latched = true;
+    else this.finish();
   }
 
   /** Tray "Start dictation" and programmatic triggers behave like a tap. */
@@ -184,7 +176,6 @@ export class DictationController {
     this.sawSpeech = false;
     this.frameCount = 0;
     this.lastSeq = 0;
-    this.chordDownAt = this.now();
 
     stt.onInterim(({ text, stableWords }) => {
       if (this.sessionId === id) {
@@ -319,9 +310,5 @@ export class DictationController {
       clearTimeout(this.resultTimer);
       this.resultTimer = null;
     }
-  }
-
-  private now(): number {
-    return this.deps.now ? this.deps.now() : Date.now();
   }
 }

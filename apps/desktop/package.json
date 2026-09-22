@@ -2,6 +2,7 @@
   "name": "@flow/desktop",
   "version": "0.0.1",
   "private": true,
+  "packageManager": "pnpm@10.32.1",
   "description": "Flow — system-wide voice dictation",
   "author": "Pawan Menuka",
   "main": "out/main/index.js",

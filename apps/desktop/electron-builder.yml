@@ -12,7 +12,7 @@ directories:
 
 files:
   - out/**
-  - "!**/*.map"
+  - '!**/*.map'
 
 # tray.ts reads icons from process.resourcesPath when packaged.
 extraResources:
@@ -28,7 +28,7 @@ electronVersion: 34.5.8
 npmRebuild: false
 
 asarUnpack:
-  - "**/*.node"
+  - '**/*.node'
   - node_modules/koffi/**
   - node_modules/uiohook-napi/**
 
@@ -61,6 +61,10 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Flow
+  runAfterFinish: true
   differentialPackage: true
   # Uninstaller keeps user data (history/dictionary/settings) by default;
   # a data-removal checkbox needs a custom NSIS include — tracked for later.

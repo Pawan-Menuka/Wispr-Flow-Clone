@@ -21,6 +21,10 @@ import { CrashGuard } from './services/crash-guard';
 import { initCrashReporting } from './services/crash-reporting';
 import { TelemetryService } from './services/telemetry';
 import { SessionMetrics } from './services/metrics';
+import {
+  importLocalDictationConfig,
+  startLocalDictationServer,
+} from './services/local-dictation-server';
 
 const API_WS_URL = process.env['FLOW_API_URL'] ?? 'ws://127.0.0.1:8787/v1/stream';
 const API_HTTP_URL = API_WS_URL.replace(/^ws/, 'http').replace(/\/stream$/, '');
@@ -34,8 +38,7 @@ if (!isSmokeTest) {
     // Lazy require keeps smoke runs byte-identical to before.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require('electron-log/main') as
-      | typeof import('electron-log/main')
-      | { default: typeof import('electron-log/main').default };
+      typeof import('electron-log/main') | { default: typeof import('electron-log/main').default };
     const log = 'default' in mod ? mod.default : mod;
     log.initialize();
     log.transports.file.maxSize = 5 * 1024 * 1024;
@@ -93,7 +96,27 @@ function bootstrap(): void {
 
   // ---------- Lifecycle ----------
   app.whenReady().then(async () => {
+    const importEnvArg = process.argv.find((arg) => arg.startsWith('--import-local-api-env='));
+    if (importEnvArg) {
+      importLocalDictationConfig(
+        app.getPath('userData'),
+        importEnvArg.slice(importEnvArg.indexOf('=') + 1),
+      );
+      app.quit();
+      return;
+    }
+
     const settings = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'));
+
+    // Installed/local builds own their anonymous dictation gateway. A custom
+    // FLOW_API_URL keeps production deployments pointed at the hosted API.
+    const localApi = process.env['FLOW_API_URL']
+      ? null
+      : await startLocalDictationServer(
+          app.getPath('userData'),
+          app.isPackaged ? undefined : path.resolve(app.getAppPath(), '../api/.env'),
+        );
+    app.on('before-quit', () => void localApi?.close());
 
     // Crash-loop detection (§3.4.3) — before anything heavy runs.
     const crashGuard = new CrashGuard(path.join(app.getPath('userData'), 'crash-guard.json'));
@@ -177,11 +200,7 @@ function bootstrap(): void {
           appContext: {
             processName: focusedApp?.processName ?? 'unknown',
             profile: (focusedApp?.profile ?? 'default') as
-              | 'default'
-              | 'slack'
-              | 'email'
-              | 'code'
-              | 'terminal',
+              'default' | 'slack' | 'email' | 'code' | 'terminal',
           },
           dictionary: dictionary.forSession(),
         }),
@@ -189,9 +208,14 @@ function bootstrap(): void {
       // --smoke-insert tests real insertion against our own window instead.
       insertText: isSmokeTest
         ? async () => true
-        : (text, processName) => insertion.insertText(text, processName ?? 'unknown').then((r) => r.ok),
+        : (text, processName) =>
+            insertion.insertText(text, processName ?? 'unknown').then((r) => r.ok),
       addHistory: (entry) =>
-        history.add({ ...entry, language: settings.get('language'), createdAt: new Date().toISOString() }),
+        history.add({
+          ...entry,
+          language: settings.get('language'),
+          createdAt: new Date().toISOString(),
+        }),
     });
     audio.onFrame((frame) => controller.onFrame(frame));
     audio.onVad((speaking) => controller.onVad(speaking));
