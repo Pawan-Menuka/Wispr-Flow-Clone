@@ -2,7 +2,7 @@
 
 > Cold-start context for a fresh Claude session. Read this + `IMPLEMENTATION_PLAN.md` (authoritative phase tracker with detailed per-phase notes) + `CLAUDE.md` (project rules). The full technical spec is `BLUEPRINT.md`.
 
-## Where things stand (2026-07-11)
+## Where things stand (2026-09-26)
 
 **19 of 21 phases done** (0–18). The complete core product works end-to-end:
 hold `Ctrl+Win` → mic capture → streaming STT → LLM formatting → paste at cursor, with overlay UI, onboarding, settings + sync, auth, history, dictionary, per-app profiles, quotas, and Stripe billing (env-gated).
@@ -10,6 +10,8 @@ hold `Ctrl+Win` → mic capture → streaming STT → LLM formatting → paste a
 **Remaining phases:**
 - **Phase 19 — Distribution**: electron-builder installers (NSIS), electron-updater channels, code signing. Unsigned installers + update plumbing are buildable now; real signing needs certificates (user purchase decision: Azure Trusted Signing / Apple Developer ID). BLUEPRINT §14.4, §26.
 - **Phase 20 — Observability + hardening**: Sentry, telemetry (PostHog, respecting the `telemetry` setting), log redaction, CI workflow (none exists yet!), launch-checklist sweep. BLUEPRINT §15, §21–25, §30.
+
+**Recent recovery fix:** Finished dictations survive processing-time disconnects; replay retains five minutes of audio and enforces the server-readiness deadline. Timed-out or failed sessions cannot paste late results. See the 2026-09-26 plan note and regression tests.
 
 ## How this project is worked
 
