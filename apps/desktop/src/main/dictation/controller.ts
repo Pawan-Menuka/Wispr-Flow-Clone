@@ -149,6 +149,7 @@ export class DictationController {
 
   onCaptureError(message: string): void {
     if (!this.sessionId) return;
+    this.deps.requestCapture(false);
     this.fail('no-mic', message || 'Microphone unavailable');
   }
 
@@ -187,15 +188,19 @@ export class DictationController {
     this.chordDownAt = this.now();
 
     stt.onInterim(({ text, stableWords }) => {
-      if (this.sessionId === id) {
+      if (this.sessionId === id && this.isAwaitingTranscript()) {
         this.deps.broadcast('dictation:interim', { text, stableWords });
       }
     });
     stt.onResult((result) => {
-      if (this.sessionId === id) this.onServerResult(result.finalText);
+      if (this.sessionId === id && this.isAwaitingTranscript()) {
+        this.onServerResult(result.finalText);
+      }
     });
     stt.onError((code, message, rawTextSoFar) => {
-      if (this.sessionId === id) {
+      if (this.sessionId === id && this.isAwaitingTranscript()) {
+        this.clearTimers();
+        this.stt?.cancel();
         if (rawTextSoFar) pushRestoreStack(id, rawTextSoFar); // words never lost (§3.1)
         this.deps.broadcast('dictation:error', {
           kind: mapWsError(code),
@@ -285,11 +290,16 @@ export class DictationController {
 
   private fail(kind: ErrorKind, message: string): void {
     this.clearTimers();
+    this.stt?.cancel();
     this.deps.broadcast('dictation:error', { kind, message });
     this.setPhase('error', { kind, message });
     this.lingerTimer = setTimeout(() => {
       if (this.phase === 'error') this.reset();
     }, ERROR_LINGER_MS);
+  }
+
+  private isAwaitingTranscript(): boolean {
+    return this.phase === 'armed' || this.phase === 'listening' || this.phase === 'processing';
   }
 
   private reset(): void {

@@ -8,11 +8,11 @@ import { encodeAudioFrame, parseServerMessage } from '@flow/shared';
  * automatic reconnection (250 ms → 4 s backoff).
  *
  * Reconnect-with-replay (§3.1): every audio frame of the active session is
- * retained (60 s ring). If the socket drops mid-session, the session enters
- * a resume window instead of failing; on reconnect the client re-issues
+ * retained (up to the controller's 5 min cap). If the socket drops mid-session,
+ * the session enters a resume window instead of failing; on reconnect the client re-issues
  * session.start with the SAME sessionId and replays all frames (the server
  * treats it as a fresh stream — full audio in, full transcript out). Only
- * after RESUME_DEADLINE_MS without a connection does the session fail.
+ * after RESUME_DEADLINE_MS without a ready acknowledgement does the session fail.
  */
 
 export interface SttSessionEvents {
@@ -39,7 +39,7 @@ export interface SttSessionHandle extends SttSessionEvents {
 const BACKOFF_MIN_MS = 250;
 const BACKOFF_MAX_MS = 4_000;
 const RESUME_DEADLINE_MS = 8_000;
-const FRAME_RETENTION_LIMIT = 3_000; // 60 s of 20 ms frames
+const FRAME_RETENTION_LIMIT = 5 * 60 * 50; // match the controller's 5 min session cap
 
 interface SessionOptions {
   sessionId: string;
@@ -53,6 +53,7 @@ export class WsClient {
   private session: SessionImpl | null = null;
   private backoff = BACKOFF_MIN_MS;
   private closedByUs = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly url: string) {}
 
@@ -61,16 +62,22 @@ export class WsClient {
   }
 
   connect(): void {
+    if (this.socket && this.socket.readyState !== WebSocket.CLOSED) return;
+    this.clearReconnectTimer();
     this.closedByUs = false;
     this.open();
   }
 
   shutdown(): void {
     this.closedByUs = true;
+    this.clearReconnectTimer();
+    this.session?.cancel();
+    this.session = null;
     this.socket?.close();
   }
 
   private open(): void {
+    if (this.closedByUs) return;
     const socket = new WebSocket(this.url);
     this.socket = socket;
 
@@ -90,10 +97,20 @@ export class WsClient {
     socket.on('close', () => {
       this.session?.onConnectionLost();
       if (!this.closedByUs) {
-        setTimeout(() => this.open(), this.backoff);
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          this.open();
+        }, this.backoff);
         this.backoff = Math.min(this.backoff * 2, BACKOFF_MAX_MS);
       }
     });
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   private route(msg: ServerMessage): void {
@@ -149,6 +166,7 @@ class SessionImpl implements SttSessionHandle {
   private replayFrom = 0; // index into frames not yet sent on the live socket
   private frames: Buffer[] = [];
   private finishSeq: number | null = null;
+  private finishSent = false;
   private resumeTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readyCbs: (() => void)[] = [];
@@ -173,6 +191,7 @@ class SessionImpl implements SttSessionHandle {
 
   sendStart(): void {
     this.ready = false;
+    this.finishSent = false;
     this.sendJson({
       t: 'session.start',
       sessionId: this.id,
@@ -186,7 +205,7 @@ class SessionImpl implements SttSessionHandle {
   }
 
   sendAudio(seq: number, pcm: Int16Array): void {
-    if (this.done) return;
+    if (this.done || this.finishSeq !== null) return;
     const frame = Buffer.from(encodeAudioFrame(seq, pcm));
     this.frames.push(frame);
     if (this.frames.length > FRAME_RETENTION_LIMIT) {
@@ -197,7 +216,7 @@ class SessionImpl implements SttSessionHandle {
   }
 
   finish(lastSeq: number): void {
-    if (this.done) return;
+    if (this.done || this.finishSeq !== null) return;
     this.finishSeq = lastSeq;
     this.flush();
   }
@@ -217,9 +236,11 @@ class SessionImpl implements SttSessionHandle {
       socket.send(this.frames[this.replayFrom]!);
       this.replayFrom++;
     }
-    if (this.finishSeq !== null) {
+    if (this.finishSeq !== null && !this.finishSent) {
       this.sendJson({ t: 'session.finish', sessionId: this.id, lastSeq: this.finishSeq });
-      this.finishSeq = null; // sent — server owns the result now
+      // Preserve the finish request until a result arrives: a replacement
+      // stream needs it again when the connection drops during processing.
+      this.finishSent = true;
     }
   }
 
@@ -238,13 +259,14 @@ class SessionImpl implements SttSessionHandle {
 
   beginReplay(): void {
     if (this.done) return;
-    this.clearResumeTimer();
     this.sendStart(); // ready ack triggers flush() of the full buffer
   }
 
   // ---------- Inbound ----------
 
   handleReady(): void {
+    if (this.done || this.ready) return;
+    this.clearResumeTimer();
     this.ready = true;
     for (const cb of this.readyCbs) cb();
     this.flush();

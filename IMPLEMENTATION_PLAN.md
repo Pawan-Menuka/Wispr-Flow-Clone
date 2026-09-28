@@ -42,6 +42,13 @@
 
 ## Phase notes
 
+### Dictation recovery and late results (2026-09-26)
+- Fixed processing-time reconnects: `session.finish` is retained and resent exactly once on a replacement connection, so a drop after finishing no longer leaves the replay waiting indefinitely for a result.
+- Audio replay now retains the controller's full five-minute session limit (about 10 MB of PCM), instead of silently losing the beginning of dictations longer than one minute.
+- The eight-second resume deadline remains active until `session.ready`, rather than ending merely when the TCP/WebSocket connection opens. Shutdown cancels reconnect timers and active sessions.
+- Controller failures cancel the STT stream; microphone failure also stops capture. Late/duplicate results and interims cannot restart insertion after an error or save/paste a dictation twice.
+- Added real-WebSocket regression cases and controller coverage for late results after timeout/microphone loss and duplicate results. Verified after rebasing onto `Develop`: 55 desktop tests and desktop typecheck passed. Added Vite client asset types for the installed TypeScript compiler's CSS side-effect-import checks. Live provider, insertion matrix, signing, and DB-dependent checks remain follow-up work.
+
 ### Phase 0 — done (2026-07-07)
 - Root: `package.json` (pnpm@10.32.1, turbo+prettier scripts), `pnpm-workspace.yaml` (apps/*, packages/*), `turbo.json` (build/typecheck/lint/test/dev), `.npmrc` (**node-linker=hoisted** — Electron tooling requirement, do not change), `.gitignore`, `.editorconfig`, `prettier.config.mjs`.
 - `packages/config`: `tsconfig.base.json` (strict, ES2022, Bundler resolution), `tsconfig.node.json` (NodeNext), `tsconfig.react.json` (DOM+jsx), `eslint.base.mjs` (flat config, typescript-eslint), exported via package.json `exports`.

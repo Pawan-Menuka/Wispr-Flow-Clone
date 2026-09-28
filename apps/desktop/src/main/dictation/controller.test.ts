@@ -243,8 +243,8 @@ describe('DictationController', () => {
     expect((error?.payload as { kind: string }).kind).toBe('quota-exceeded');
   });
 
-  it('result timeout degrades to a network error', () => {
-    const { deps } = makeDeps('hold');
+  it('result timeout cancels the stream and ignores late results', async () => {
+    const { deps, calls, getStt, broadcasts } = makeDeps('hold');
     const controller = new DictationController(deps);
     controller.onChordDown();
     controller.onVad(true);
@@ -255,6 +255,41 @@ describe('DictationController', () => {
 
     vi.advanceTimersByTime(10_000);
     expect(controller.currentPhase).toBe('error');
+    expect(getStt()!.cancelled).toBe(true);
+    getStt()!.emitResult('Late result must not paste.');
+    getStt()!.emitInterim('late interim');
+    await flush();
+    expect(controller.currentPhase).toBe('error');
+    expect(calls.inserted).toEqual([]);
+    expect(calls.history).toEqual([]);
+    expect(broadcasts.some((b) => b.channel === 'dictation:result')).toBe(false);
+    expect(broadcasts.some((b) => b.channel === 'dictation:interim')).toBe(false);
+  });
+
+  it('microphone loss cancels the stream and ignores its late result', async () => {
+    const { deps, calls, getStt } = makeDeps('hold');
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    controller.onVad(true);
+    controller.onCaptureError('Device disconnected');
+    expect(getStt()!.cancelled).toBe(true);
+    getStt()!.emitResult('Late result must not paste.');
+    await flush();
+    expect(controller.currentPhase).toBe('error');
+    expect(calls.inserted).toEqual([]);
+  });
+
+  it('a duplicate result cannot insert or save the same dictation twice', async () => {
+    const { deps, calls, getStt } = makeDeps('hold');
+    const controller = new DictationController(deps);
+    controller.onChordDown();
+    controller.onVad(true);
+    controller.onChordUp();
+    getStt()!.emitResult('Once only.');
+    getStt()!.emitResult('Once only.');
+    await flush();
+    expect(calls.inserted).toEqual(['Once only.']);
+    expect(calls.history).toEqual(['Once only.']);
   });
 
   it('profile "off" refuses before recording', () => {
